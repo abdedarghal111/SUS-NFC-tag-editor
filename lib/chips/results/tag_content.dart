@@ -1,6 +1,6 @@
 // Contenido NDEF leído de la etiqueta.
 
-import '../../ndef/ndef_payload.dart';
+import '../ndef/ndef_payload.dart';
 import 'tag_result.dart';
 
 /// Contenido NDEF grabado en la etiqueta.
