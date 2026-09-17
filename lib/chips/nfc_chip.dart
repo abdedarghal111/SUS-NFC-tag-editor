@@ -47,6 +47,12 @@ abstract class NfcChip {
   /// Nombre comercial del modelo.
   String get name;
 
+  /// Indica si la app admite trabajar con este modelo.
+  ///
+  /// Falso significa que la clase existe como catálogo pero sus operaciones no
+  /// están escritas: la etiqueta se reconoce y se rechaza con aviso.
+  bool get enabled;
+
   /// Indica si el modelo se ha probado contra una etiqueta real.
   ///
   /// Falso significa que el soporte está escrito según el datasheet pero nadie
