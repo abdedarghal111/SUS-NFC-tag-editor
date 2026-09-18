@@ -1,4 +1,4 @@
-// De dónde sale la certeza sobre qué modelo es la etiqueta.
+// De dónde sale el modelo que se le atribuye a la etiqueta.
 
 /// Cómo se ha averiguado el modelo del chip.
 enum ChipSource {
@@ -8,6 +8,6 @@ enum ChipSource {
   /// Se ha comprobado midiendo la memoria, no solo preguntando.
   measured,
 
-  /// La etiqueta no lo dice o dice algo desconocido: se trabaja a ciegas.
-  assumed,
+  /// Lo ha elegido el usuario a mano, sin que la etiqueta lo confirme.
+  chosen,
 }

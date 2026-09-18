@@ -9,16 +9,19 @@ import 'chip_source.dart';
 /// Un chip vale para una sola pasada: nace cuando se identifica la etiqueta,
 /// atiende las operaciones que pida la app y se tira. La siguiente pasada
 /// construye uno nuevo, así que no guarda estado entre una y otra.
+///
+/// También es la ficha del modelo: [name], [enabled], [devTested] y
+/// [capabilities] describen el chip y no la etiqueta, y se responden sin canal.
 abstract class NfcChip {
   NfcChip(this._tag);
 
-  TagTransceiver _tag;
+  final TagTransceiver? _tag;
 
   /// Cómo se ha averiguado que la etiqueta es de este modelo.
   ///
-  /// Lo fija [ChipGate] al identificar. Vale [ChipSource.assumed] mientras
-  /// nadie lo haya comprobado, que es lo que pasa al crear el chip a mano.
-  ChipSource source = ChipSource.assumed;
+  /// Lo fija [ChipGate] al identificar, o vale [ChipSource.chosen] si el
+  /// modelo lo ha puesto el usuario a mano.
+  ChipSource source = ChipSource.chosen;
 
   /// Nombre comercial del modelo.
   String get name;
@@ -42,5 +45,14 @@ abstract class NfcChip {
   bool get devTested;
 
   /// Canal abierto con la etiqueta.
-  TagTransceiver get tag => _tag;
+  ///
+  /// Lanza [StateError] si el chip se construyó solo como ficha del modelo,
+  /// sin etiqueta delante.
+  TagTransceiver get tag {
+    final channel = _tag;
+    if (channel == null) {
+      throw StateError('$name se ha construido como ficha, sin etiqueta.');
+    }
+    return channel;
+  }
 }
