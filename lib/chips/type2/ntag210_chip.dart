@@ -3,6 +3,9 @@
 import 'ntag21x_chip.dart';
 
 /// Chip NTAG210 de NXP.
+///
+/// El modelo más pequeño de la serie: 48 bytes de contenido y sin contador de
+/// lecturas.
 class Ntag210Chip extends Ntag21xChip {
   Ntag210Chip(super.tag);
 
@@ -14,6 +17,9 @@ class Ntag210Chip extends Ntag21xChip {
 
   @override
   bool get devTested => false;
+
+  @override
+  bool get hasNfcCounter => false;
 
   @override
   int get storageByte => 0x0B;

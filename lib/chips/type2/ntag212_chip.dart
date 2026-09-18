@@ -3,6 +3,9 @@
 import 'ntag21x_chip.dart';
 
 /// Chip NTAG212 de NXP.
+///
+/// Modelo intermedio entre el 210 y el 213: 128 bytes de contenido y sin
+/// contador de lecturas.
 class Ntag212Chip extends Ntag21xChip {
   Ntag212Chip(super.tag);
 
@@ -14,6 +17,9 @@ class Ntag212Chip extends Ntag21xChip {
 
   @override
   bool get devTested => false;
+
+  @override
+  bool get hasNfcCounter => false;
 
   @override
   int get storageByte => 0x0E;

@@ -1,8 +1,10 @@
 // Subfamilia NTAG21x: Type 2 con contraseña por AUTH0 y firma de fábrica.
 
+import '../chip_capabilities.dart';
 import '../ndef/ndef_message_codec.dart';
 import '../ndef/ndef_payload.dart';
 import '../results/auth_result.dart';
+import '../results/capacity_probe.dart';
 import '../results/protection_probe.dart';
 import '../results/protection_result.dart';
 import '../results/security_status.dart';
@@ -26,8 +28,11 @@ import '../features/writable.dart';
 import 'auth0_layout.dart';
 import 'type2_chip.dart';
 
-/// PACK que se graba al poner contraseña; su valor concreto es indiferente.
-const List<int> kDefaultPack = [0x1A, 0x2B];
+/// PACK que se graba al poner contraseña.
+///
+/// Es el acuse que devuelve PWD_AUTH y que comprueban los lectores que lo
+/// verifican.
+const List<int> defaultPack = [0x00, 0x00];
 
 /// Chip de la serie NTAG21x de NXP.
 ///
@@ -70,7 +75,7 @@ abstract class Ntag21xChip extends Type2Chip
   /// Página que guarda el PACK de 2 bytes.
   int get packPage => configPage0 + 3;
 
-  /// Primera página de configuración: el contenido nunca llega hasta ahí.
+  /// Última página de contenido: a partir de ahí empieza la configuración.
   int get lastContentPage => configPage0 - 3;
 
   /// Posición de AUTH0 dentro de CFG0 con la que se trabaja.
@@ -79,6 +84,20 @@ abstract class Ntag21xChip extends Type2Chip
   /// atienden cambiando este valor desde la interfaz.
   Auth0Layout layout = Auth0Layout.standard;
 
+  @override
+  ChipCapabilities get capabilities => ChipCapabilities(
+    maxContentBytes: userBytes,
+    password: const PasswordSpec(length: 4),
+    canProtectRead: true,
+    hasCounter: hasNfcCounter,
+    firstProtectablePage: Type2Chip.firstDataPage,
+  );
+
+  /// Indica si el modelo lleva el contador de lecturas NFC.
+  ///
+  /// El NTAG210 y el NTAG212 no lo tienen; el resto de la serie sí.
+  bool get hasNfcCounter => true;
+
   /// Lee los 4 bytes de CFG0, donde vive AUTH0.
   Future<List<int>> readConfig() async {
     final bytes = await readPages(configPage0);
@@ -86,62 +105,15 @@ abstract class Ntag21xChip extends Type2Chip
   }
 
   @override
-  Future<TagContent> readContent({List<int> password = const []}) =>
-      run(() => _readContent(password));
-
-  @override
-  Future<WriteReport> writeContent(
-    List<NdefPayload> payloads, {
-    List<int> password = const [],
-  }) => run(() => _writeContent(payloads, password));
-
-  @override
-  Future<WriteReport> eraseContent({List<int> password = const []}) =>
-      run(() => _eraseContent(password));
-
-  @override
-  Future<SecurityStatus> readSecurity({List<int> password = const []}) =>
-      run(() => _readSecurity(password));
-
-  @override
-  Future<ProtectionResult> setPassword(
-    List<int> password, {
-    required int fromPage,
-  }) => run(() => _setPassword(password, fromPage));
-
-  @override
-  Future<ProtectionResult> removePassword(List<int> password) =>
-      run(() => _removePassword(password));
-
-  @override
-  Future<TagInfo> readInfo() => run(_readInfo);
-
-  @override
-  Future<bool> matchesTag() => run(() async {
-    final info = await _readInfo();
+  Future<bool> matchesTag() async {
+    final info = await readInfo();
     return info.product == storageByte;
-  });
+  }
 
   @override
-  Future<int> readCounter() => run(_readCounter);
+  Future<List<int>> readOriginalitySignature() async => readSignature();
 
-  @override
-  Future<List<int>> readOriginalitySignature() =>
-      run(() async => readSignature());
-
-  @override
-  Future<ProtectionResult> setReadProtection(
-    bool enabled, {
-    List<int> password = const [],
-  }) => run(() => _setReadProtection(enabled, password));
-
-  /// Comprueba si la etiqueta aplica de verdad la protección que declara.
-  ///
-  /// Leer CFG0 solo cuenta lo que dice; un clon puede guardar el valor y no
-  /// hacerle caso. La prueba concluyente es escribir sin autenticarse.
-  Future<ProtectionProbe> probeProtection() => run(_probeProtection);
-
-  /// Autentica solo si la zona está protegida y hay contraseña autorizada.
+  /// Autentica solo si la zona está protegida y hay contraseña que enviar.
   ///
   /// Una contraseña vacía significa no autenticar: la etiqueta responde igual
   /// que ante cualquier otra app.
@@ -152,13 +124,14 @@ abstract class Ntag21xChip extends Type2Chip
       return const AuthResult.notProtected();
     }
     if (password.length != Type2Chip.pageSize) {
-      tag.trace.add('Zona protegida, pero no se ha autorizado la contraseña.');
+      tag.trace.add('Zona protegida y sin contraseña que enviar.');
       return const AuthResult.skipped();
     }
     return AuthResult.accepted(await sendPassword(password));
   }
 
-  Future<TagContent> _readContent(List<int> password) async {
+  @override
+  Future<TagContent> readContent({List<int> password = const []}) async {
     await _unlockIfNeeded(password);
 
     final bytes = <int>[];
@@ -198,10 +171,11 @@ abstract class Ntag21xChip extends Type2Chip
     await sendPassword(password);
   }
 
-  Future<WriteReport> _writeContent(
-    List<NdefPayload> payloads,
-    List<int> password,
-  ) async {
+  @override
+  Future<WriteReport> writeContent(
+    List<NdefPayload> payloads, {
+    List<int> password = const [],
+  }) async {
     final block = NdefMessageCodec.encode(payloads);
     await _ensureFits(block.length);
 
@@ -228,7 +202,8 @@ abstract class Ntag21xChip extends Type2Chip
     );
   }
 
-  Future<WriteReport> _eraseContent(List<int> password) async {
+  @override
+  Future<WriteReport> eraseContent({List<int> password = const []}) async {
     final auth = await _authenticate(password, Type2Chip.firstDataPage);
     final block = NdefMessageCodec.emptyBlock();
     try {
@@ -265,7 +240,8 @@ abstract class Ntag21xChip extends Type2Chip
   ///
   /// La prueba se omite si AUTHLIM no es cero: cada fallo acercaría la
   /// etiqueta a un bloqueo permanente.
-  Future<SecurityStatus> _readSecurity(List<int> password) async {
+  @override
+  Future<SecurityStatus> readSecurity({List<int> password = const []}) async {
     final bytes = await readPages(configPage0);
     if (bytes.length < 16) {
       throw IncompleteResponseError(
@@ -287,7 +263,8 @@ abstract class Ntag21xChip extends Type2Chip
       try {
         await sendPassword(password);
         correct = true;
-      } catch (_) {
+      } catch (error) {
+        tag.note('la contraseña no ha sido aceptada', error);
         correct = false;
       }
     }
@@ -303,15 +280,16 @@ abstract class Ntag21xChip extends Type2Chip
     );
   }
 
-  Future<ProtectionResult> _setPassword(
-    List<int> password,
-    int fromPage,
-  ) async {
+  @override
+  Future<ProtectionResult> setPassword(
+    List<int> password, {
+    required int fromPage,
+  }) async {
     await _authenticate(password, passwordPage);
 
     final config = await readConfig();
     await writePage(passwordPage, password);
-    await writePage(packPage, [...kDefaultPack, 0x00, 0x00]);
+    await writePage(packPage, [...defaultPack, 0x00, 0x00]);
     await writePage(configPage0, Type2Chip.withAuth0(config, fromPage, layout));
 
     final updated = await readConfig();
@@ -328,7 +306,8 @@ abstract class Ntag21xChip extends Type2Chip
     return ProtectionResult(updated[layout.offset]);
   }
 
-  Future<ProtectionResult> _removePassword(List<int> password) async {
+  @override
+  Future<ProtectionResult> removePassword(List<int> password) async {
     await _authenticate(password, configPage0);
 
     final config = await readConfig();
@@ -353,7 +332,8 @@ abstract class Ntag21xChip extends Type2Chip
   ///
   /// GET_VERSION y READ_SIG son los comandos que más clones rechazan, y un
   /// rechazo corta la conexión, así que van al final y sus fallos se absorben.
-  Future<TagInfo> _readInfo() async {
+  @override
+  Future<TagInfo> readInfo() async {
     final capacity = await _readCapacity();
     final config = await readConfig();
 
@@ -365,16 +345,16 @@ abstract class Ntag21xChip extends Type2Chip
         manufacturer = version[1];
         product = version[6];
       }
-    } catch (_) {
-      tag.trace.add('La etiqueta no responde a GET_VERSION.');
+    } catch (error) {
+      tag.note('la etiqueta no responde a GET_VERSION', error);
     }
 
     var hasSignature = false;
     try {
       final signature = await readSignature();
       hasSignature = signature.isNotEmpty && signature.any((byte) => byte != 0);
-    } catch (_) {
-      tag.trace.add('La etiqueta no responde a READ_SIG.');
+    } catch (error) {
+      tag.note('la etiqueta no responde a READ_SIG', error);
     }
 
     return TagInfo(
@@ -394,13 +374,14 @@ abstract class Ntag21xChip extends Type2Chip
   ///
   /// Devuelve 0 si el contador está desactivado: la etiqueta rechaza el
   /// comando en vez de contestar cero.
-  Future<int> _readCounter() async {
+  @override
+  Future<int> readCounter() async {
     try {
       final bytes = await tag.send([0x39, 0x00], label: 'READ_CNT');
       if (bytes.length < 3) return 0;
       return bytes[0] | (bytes[1] << 8) | (bytes[2] << 16);
-    } catch (_) {
-      tag.trace.add('La etiqueta no lleva el contador activado.');
+    } catch (error) {
+      tag.note('la etiqueta no lleva el contador activado', error);
       return 0;
     }
   }
@@ -409,10 +390,11 @@ abstract class Ntag21xChip extends Type2Chip
   ///
   /// Conserva el resto del byte: los otros bits llevan AUTHLIM y la
   /// configuración del contador.
-  Future<ProtectionResult> _setReadProtection(
-    bool enabled,
-    List<int> password,
-  ) async {
+  @override
+  Future<ProtectionResult> setReadProtection(
+    bool enabled, {
+    List<int> password = const [],
+  }) async {
     await _authenticate(password, configPage1);
 
     final page = await readPages(configPage1);
@@ -426,9 +408,12 @@ abstract class Ntag21xChip extends Type2Chip
     return ProtectionResult(config[layout.offset]);
   }
 
-  /// Reescribe la primera página de contenido con su propio valor, sin
-  /// autenticar, y observa si la etiqueta lo acepta.
-  Future<ProtectionProbe> _probeProtection() async {
+  /// Comprueba si la etiqueta aplica de verdad la protección que declara.
+  ///
+  /// Leer CFG0 solo cuenta lo que dice; un clon puede guardar el valor y no
+  /// hacerle caso. La prueba concluyente es reescribir la primera página de
+  /// contenido sin autenticarse: si la acepta, la protección no se aplica.
+  Future<ProtectionProbe> probeProtection() async {
     final config = await readConfig();
     final page = await readPages(Type2Chip.firstDataPage);
     final original = page.sublist(0, Type2Chip.pageSize);
@@ -437,8 +422,8 @@ abstract class Ntag21xChip extends Type2Chip
     try {
       await writePage(Type2Chip.firstDataPage, original);
       accepted = true;
-    } catch (_) {
-      tag.trace.add('La etiqueta ha rechazado la escritura sin contraseña.');
+    } catch (error) {
+      tag.note('la etiqueta ha rechazado la escritura sin contraseña', error);
     }
 
     return ProtectionProbe(
@@ -446,5 +431,73 @@ abstract class Ntag21xChip extends Type2Chip
       layout: layout,
       writeAccepted: accepted,
     );
+  }
+
+  /// Mide la memoria que la etiqueta tiene de verdad, escribiendo una marca
+  /// distinta en cada página de contenido.
+  ///
+  /// La memoria de más de un clon es la misma repetida: al pasarse del final
+  /// vuelve a la primera página, y ahí se le pilla. La prueba se queda en la
+  /// zona de contenido y la deja vacía, sin tocar los bits de bloqueo.
+  Future<CapacityProbe> measureCapacity() async {
+    final auth = await _authenticate(const [], Type2Chip.firstDataPage);
+    if (auth.wasProtected) {
+      throw WriteRejectedError(
+        operation: 'la medición de la memoria',
+        cause: 'AUTH0 protege la zona de contenido.',
+      );
+    }
+
+    final declared = await _readCapacity();
+    final first = Type2Chip.firstDataPage;
+    await writePage(first, _stamp(first));
+
+    var lastGood = first;
+    var wrapped = false;
+    var rejected = false;
+
+    for (var page = first + 1; page < lastContentPage; page++) {
+      try {
+        await writePage(page, _stamp(page));
+      } catch (error) {
+        tag.note('la etiqueta no deja escribir más allá de $lastGood', error);
+        rejected = true;
+        break;
+      }
+      // Si la memoria da la vuelta, esta página es en realidad la primera.
+      final start = await readPages(first);
+      if (!_hasStamp(start, first)) {
+        wrapped = true;
+        break;
+      }
+      lastGood = page;
+    }
+
+    try {
+      await writePage(first, NdefMessageCodec.emptyBlock());
+    } catch (error) {
+      tag.note('la etiqueta no se ha podido dejar vacía', error);
+    }
+
+    final pages = lastGood - first + 1;
+    return CapacityProbe(
+      declaredBytes: declared,
+      measuredBytes: pages * Type2Chip.pageSize,
+      lastGoodPage: lastGood,
+      wrapped: wrapped,
+      rejected: rejected,
+    );
+  }
+
+  /// Marca que identifica a una página dentro de la memoria.
+  List<int> _stamp(int page) => [0xC5, page, 0xA3, page ^ 0xFF];
+
+  /// Indica si la lectura empieza por la marca de [page].
+  bool _hasStamp(List<int> bytes, int page) {
+    final stamp = _stamp(page);
+    for (var i = 0; i < Type2Chip.pageSize; i++) {
+      if (bytes[i] != stamp[i]) return false;
+    }
+    return true;
   }
 }
