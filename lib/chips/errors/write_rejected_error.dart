@@ -2,12 +2,12 @@
 
 import 'nfc_error.dart';
 
-/// La etiqueta ha rechazado escribir y no se había autorizado la contraseña.
+/// La etiqueta ha rechazado escribir porque está protegida con contraseña.
 class WriteRejectedError extends NfcError {
   WriteRejectedError({required this.operation, required String cause})
     : super(
-        'La etiqueta está protegida y no has autorizado usar la contraseña, '
-        'así que ha rechazado $operation.',
+        'La etiqueta está protegida con contraseña y ha rechazado $operation. '
+        'Quítale la contraseña para poder escribir.',
         details: cause,
       );
 
