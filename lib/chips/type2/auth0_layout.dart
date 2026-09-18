@@ -5,13 +5,17 @@
 /// El estándar lo pone en el último byte, pero algunos clones no lo respetan.
 /// Poder elegir permite averiguar cuál honra el chip que se tenga delante.
 enum Auth0Layout {
-  standard(3, 'Estándar (byte 3)'),
-  firstByte(0, 'Byte 0 (clones)');
+  /// Posición del estándar: AUTH0 es el último byte de CFG0.
+  standard(3, 'Último byte'),
+
+  /// Posición de los clones que colocan AUTH0 en el primer byte de CFG0.
+  firstByte(0, 'Primer byte');
 
   const Auth0Layout(this.offset, this.label);
 
   /// Índice del byte de AUTH0 dentro de CFG0.
   final int offset;
 
+  /// Nombre de la posición tal y como se muestra en la interfaz.
   final String label;
 }
