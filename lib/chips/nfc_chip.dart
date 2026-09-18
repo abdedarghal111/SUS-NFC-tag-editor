@@ -1,6 +1,7 @@
 // Base común de todos los chips NFC que la app reconoce.
 
 import '../nfc/tag_transceiver.dart';
+import 'chip_capabilities.dart';
 import 'chip_source.dart';
 
 /// Chip NFC identificado, sea cual sea su familia.
@@ -21,6 +22,12 @@ abstract class NfcChip {
 
   /// Nombre comercial del modelo.
   String get name;
+
+  /// Lo que este modelo permite hacer y con qué límites.
+  ///
+  /// La interfaz se dibuja a partir de esto, sin preguntar qué chip es. Por
+  /// defecto no permite nada: lo rellena cada familia que sepa operar.
+  ChipCapabilities get capabilities => const ChipCapabilities();
 
   /// Indica si la app admite trabajar con este modelo.
   ///
