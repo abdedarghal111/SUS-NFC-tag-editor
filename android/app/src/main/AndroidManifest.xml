@@ -1,5 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.NFC"/>
+    <!-- Consultar en GitHub si hay una versión más nueva publicada. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <uses-feature android:name="android.hardware.nfc" android:required="true"/>
     <application
         android:label="SUS NFC Tag Editor"

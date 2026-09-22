@@ -6,6 +6,7 @@ import '../chips/chip_catalog.dart';
 import '../chips/chip_source.dart';
 import '../state/tag_controller.dart';
 import '../widgets/error_card.dart';
+import '../widgets/update_banner.dart';
 import 'chip_picker_screen.dart';
 import 'workspace_screen.dart';
 
@@ -106,6 +107,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              const UpdateBanner(),
               const SizedBox(height: 32),
               Icon(Icons.nfc, size: 72, color: theme.colorScheme.primary),
               const SizedBox(height: 16),
