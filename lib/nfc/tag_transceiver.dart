@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:nfc_manager/nfc_manager.dart';
 import 'package:nfc_manager/nfc_manager_android.dart';
 
+import '../chips/errors/nfc_error.dart';
 import '../utils/hex.dart';
 
 /// Canal de bajo nivel con una etiqueta ya enganchada.
@@ -32,10 +33,13 @@ class TagTransceiver {
   ///
   /// Los clones tardan más que un NXP y con el valor por defecto la conexión
   /// se da por perdida.
+  /// Una referencia caducada se propaga: no es que la etiqueta no lo admita,
+  /// es que no hay etiqueta con la que hablar.
   Future<void> applyTimeout(int milliseconds) async {
     try {
       await _nfcA.setTimeout(milliseconds);
-    } catch (_) {
+    } catch (error) {
+      if (NfcError.isStaleHandle(error)) rethrow;
       trace.add('Esta etiqueta no admite cambiar el tiempo de espera.');
     }
   }

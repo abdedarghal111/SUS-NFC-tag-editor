@@ -13,6 +13,13 @@ class NfcError implements Exception {
   /// Traduce una excepción de la capa nativa a un [NfcError] entendible.
   factory NfcError.from(Object error) {
     final details = error.toString();
+    if (isStaleHandle(error)) {
+      return NfcError(
+        'El teléfono ha dado por caducada la etiqueta antes de empezar a '
+        'hablar con ella. Sepárala, vuelve a acercarla y repite.',
+        details: details,
+      );
+    }
     if (isConnectionLost(error)) {
       return NfcError(
         'Se ha perdido la conexión con la etiqueta antes de terminar. '
@@ -36,8 +43,18 @@ class NfcError implements Exception {
   }
 
   /// Indica si la excepción es una caída de conexión y no un rechazo.
+  ///
+  /// Una referencia caducada cuenta como tal: no ha habido diálogo con la
+  /// etiqueta, así que reintentar con la que se descubra de nuevo vale.
   static bool isConnectionLost(Object error) =>
-      error.toString().contains('TagLostException');
+      error.toString().contains('TagLostException') || isStaleHandle(error);
+
+  /// Indica que Android ha dado por caducada la referencia a la etiqueta.
+  ///
+  /// Pasa al reiniciar el modo lector: las etiquetas descubiertas en la
+  /// sesión anterior dejan de valer y ni siquiera admiten el primer comando.
+  static bool isStaleHandle(Object error) =>
+      error.toString().contains('is out of date');
 
   @override
   String toString() => message;
