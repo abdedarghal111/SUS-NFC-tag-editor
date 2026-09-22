@@ -140,18 +140,11 @@ jobs:
           # generate_release_notes crea el changelog automáticamente
           generate_release_notes: true
           body: |
-            Solo hay builds de Android e iOS: la app necesita el hardware NFC
-            del teléfono, que no existe en escritorio ni en el navegador.
+            Solo Android e iOS: la app necesita el NFC del teléfono.
 
-            Los builds **no están firmados** (proyecto personal open source,
-            sin certificados de firma): el APK/AAB usa la clave debug y el IPA
-            no tiene codesign, así que necesitarás firmarlos tú mismo o
-            instalarlos por vías que no requieran firma (sideload, TestFlight
-            manual, etc).
-
-            El APK/AAB de Android está compilado solo para la arquitectura más
-            común hoy en día, así que puede que no instale en algún móvil muy
-            antiguo.
+            Los builds **no están firmados** y el de Android va compilado para
+            la arquitectura más común, así que puede no instalar en móviles muy
+            antiguos.
           files: |
             artifacts/android-build/**/*.apk
             artifacts/android-build/**/*.aab
