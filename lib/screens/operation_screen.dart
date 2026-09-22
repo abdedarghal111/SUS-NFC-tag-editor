@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 
 import '../chips/ndef/ndef_payload.dart';
 import '../state/tag_controller.dart';
-import '../widgets/auth0_selector.dart';
 import '../widgets/content_editor.dart';
 import '../widgets/error_card.dart';
 import '../widgets/password_field.dart';
@@ -37,8 +36,10 @@ class _OperationScreenState extends State<OperationScreen> {
 
   TagOperation get _operation => widget.operation;
 
+  /// Las operaciones que no la necesitan arrancan con el campo vacío: si
+  /// viniera relleno se mandaría igual, y un fallo cuenta para el AUTHLIM.
   late final TextEditingController _password = TextEditingController(
-    text: _c.password,
+    text: _operation.passwordOptional ? '' : _c.password,
   );
 
   /// Contenido montado en el editor, aún sin grabar.
@@ -47,10 +48,15 @@ class _OperationScreenState extends State<OperationScreen> {
   /// Indica si la operación ya se ha lanzado al menos una vez.
   bool _ran = false;
 
+  /// Estado de la casilla que ofrezca la operación.
+  bool _option = false;
+
   @override
   void initState() {
     super.initState();
-    _c.dismissError();
+    // Descartar el error avisa a las pantallas de debajo, que en este punto
+    // se están pintando todavía.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _c.dismissError());
     if (_operation.startsOnOpen) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _startIfIdle());
     }
@@ -72,7 +78,9 @@ class _OperationScreenState extends State<OperationScreen> {
 
   /// Indica si ya está todo lo que la operación necesita para lanzarse.
   bool get _ready {
-    if (_operation.needsPassword && _password.text.length != _passwordLength) {
+    if (_operation.needsPassword &&
+        !_operation.passwordOptional &&
+        _password.text.length != _passwordLength) {
       return false;
     }
     if (_operation.needsContent && _payloads.isEmpty) return false;
@@ -88,10 +96,14 @@ class _OperationScreenState extends State<OperationScreen> {
     await _operation.run(
       _c,
       OperationInput(
-        password: _operation.needsPassword
+        // A medio escribir no se manda: la etiqueta la rechazaría y, con
+        // AUTHLIM puesto, ese fallo cuenta.
+        password:
+            _operation.needsPassword && _password.text.length == _passwordLength
             ? _password.text.codeUnits
             : const [],
         payloads: _payloads,
+        option: _option,
       ),
     );
   }
@@ -158,18 +170,30 @@ class _OperationScreenState extends State<OperationScreen> {
                     child: PasswordField(
                       field: _password,
                       length: _passwordLength,
+                      optional: _operation.passwordOptional,
                       enabled: !busy,
                       onChanged: () => setState(() {}),
                     ),
                   ),
-                if (_operation.tunesAuth0)
+                if (_operation.optionLabel != null)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 12, 8, 0),
+                    child: SwitchListTile(
+                      value: _option,
+                      onChanged: busy
+                          ? null
+                          : (value) => setState(() => _option = value),
+                      title: Text(_operation.optionLabel!),
+                      subtitle: _operation.optionHint == null
+                          ? null
+                          : Text(_operation.optionHint!),
+                    ),
+                  ),
+                // Por dónde va, mientras la etiqueta contesta.
+                if (_ran && _operation.progress != null)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
-                    child: Auth0Selector(
-                      layout: _c.layout,
-                      enabled: !busy,
-                      onChanged: _c.useLayout,
-                    ),
+                    child: _operation.progress!(_c),
                   ),
 
                 // Cómo ha terminado.

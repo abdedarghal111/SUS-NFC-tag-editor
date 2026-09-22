@@ -12,6 +12,7 @@ class PasswordField extends StatelessWidget {
     required this.length,
     required this.enabled,
     required this.onChanged,
+    this.optional = false,
   });
 
   /// Texto tecleado, que gobierna la pantalla que monta el campo.
@@ -24,6 +25,9 @@ class PasswordField extends StatelessWidget {
 
   final VoidCallback onChanged;
 
+  /// Indica que la operación tira adelante aunque se deje en blanco.
+  final bool optional;
+
   @override
   Widget build(BuildContext context) {
     return TextField(
@@ -32,8 +36,12 @@ class PasswordField extends StatelessWidget {
       maxLength: length,
       onChanged: (_) => onChanged(),
       decoration: InputDecoration(
-        labelText: 'Contraseña ($length caracteres)',
-        helperText: 'Hay que rellenarlos todos, como en las demás apps',
+        labelText: optional
+            ? 'Contraseña ($length caracteres, opcional)'
+            : 'Contraseña ($length caracteres)',
+        helperText: optional
+            ? 'Déjala en blanco si no quieres comprobarla'
+            : 'Hay que rellenarlos todos, como en las demás apps',
         border: const OutlineInputBorder(),
       ),
     );

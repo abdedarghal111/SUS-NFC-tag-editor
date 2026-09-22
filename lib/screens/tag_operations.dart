@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 
 import '../chips/ndef/ndef_payload.dart';
 import '../state/tag_controller.dart';
-import '../widgets/capacity_card.dart';
+import '../widgets/memory_card.dart';
+import '../widgets/memory_grid.dart';
 import '../widgets/probe_card.dart';
+import '../widgets/probe_steps.dart';
 import '../widgets/security_card.dart';
 import '../widgets/tag_card.dart';
 
@@ -49,11 +51,14 @@ class TagOperation {
     required this.description,
     required this.run,
     this.needsPassword = false,
+    this.passwordOptional = false,
+    this.optionLabel,
+    this.optionHint,
     this.needsContent = false,
-    this.tunesAuth0 = false,
     this.danger = false,
     this.warning,
     this.detail,
+    this.progress,
   });
 
   /// Apartado en el que se lista la operación.
@@ -78,6 +83,17 @@ class TagOperation {
   /// Indica si hay que pedir la contraseña antes de lanzarla.
   final bool needsPassword;
 
+  /// Indica que la contraseña se pide pero no hace falta rellenarla.
+  ///
+  /// La operación funciona sin ella y aporta algo más si se da.
+  final bool passwordOptional;
+
+  /// Casilla que la operación ofrece antes de lanzarse, o null si no ofrece.
+  final String? optionLabel;
+
+  /// Una línea explicando qué cambia la casilla.
+  final String? optionHint;
+
   /// Indica si hay que montar contenido antes de lanzarla.
   final bool needsContent;
 
@@ -90,13 +106,15 @@ class TagOperation {
   /// Detalle del resultado, o null si basta con el resumen.
   final Widget Function(TagController controller)? detail;
 
-  /// Indica si la operación trabaja con AUTH0 y admite elegir su posición.
-  final bool tunesAuth0;
+  /// Lo que se enseña mientras la operación está en marcha.
+  final Widget Function(TagController controller)? progress;
 
   /// Indica si la operación arranca sola al abrir su pantalla.
   ///
-  /// Las de información no cambian nada y no hay nada que confirmar.
-  bool get startsOnOpen => group == OperationGroup.information;
+  /// Las de información no cambian nada y no hay nada que confirmar. Las que
+  /// piden contraseña esperan: un intento fallido cuenta para el AUTHLIM.
+  bool get startsOnOpen =>
+      group == OperationGroup.information && !needsPassword;
 }
 
 /// Operaciones que admite el chip que hay delante, en el orden de la lista.
@@ -106,6 +124,9 @@ class TagOperation {
 List<TagOperation> operationsFor(TagController controller) {
   final can = controller.capabilities;
   final locked = controller.info?.isLocked ?? false;
+  // Sin ficha no se sabe cómo está la etiqueta: con la lectura protegida no
+  // se deja leer. Las operaciones que la abren tienen que seguir a mano.
+  final unknown = controller.info == null;
   // Escribir y borrar nunca se autentican: con la etiqueta protegida se avisa
   // de que la va a rechazar.
   final lockedWarning = locked
