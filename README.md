@@ -88,6 +88,9 @@ investigando; si hay más, se añaden sin problema.
 Cada modelo es una clase dentro de `lib/chips/`, agrupada por familia. Añadir
 otro es escribir su clase y declarar lo que sabe hacer.
 
+⚠️ **Se aceptan contribuciones**, sobre todo para implementar las familias que
+faltan.
+
 ### Puesta en marcha
 
 Hacen falta [Flutter](https://flutter.dev) y Dart, un Android conectado por USB
