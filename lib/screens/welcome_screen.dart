@@ -109,7 +109,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
             children: [
               const UpdateBanner(),
               const SizedBox(height: 32),
-              Icon(Icons.nfc, size: 72, color: theme.colorScheme.primary),
+              Image.asset('.github/images/logo.png', height: 96),
               const SizedBox(height: 16),
               Text(
                 'SUS NFC Tag Editor',
