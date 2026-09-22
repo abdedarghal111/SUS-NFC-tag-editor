@@ -52,8 +52,8 @@ class TagController extends ChangeNotifier {
   /// Última comprobación de si la protección se aplica de verdad.
   ProtectionProbe? probe;
 
-  /// Última medición de la memoria real.
-  CapacityProbe? capacity;
+  /// Cómo van los tres pasos de la prueba de la contraseña.
+  ProbeProgress probeProgress = const ProbeProgress();
 
   /// Último valor leído del contador de lecturas.
   int? counter;
@@ -291,14 +291,125 @@ class TagController extends ChangeNotifier {
     });
   }
 
+  /// Pone una contraseña, intenta escribir sin ella y la quita.
+  ///
+  /// Cada paso va en su propia sesión: la etiqueta no aplica AUTH0 hasta que
+  /// se la vuelve a seleccionar, así que probar en la misma pasada en la que
+  /// se pone la contraseña daría siempre que no protege.
+  Future<void> probeProtection() async {
+    probe = null;
+    probeProgress = const ProbeProgress();
+    notifyListeners();
+
+    var payloads = const <NdefPayload>[];
+    var skipped = false;
+
+    _probeStep(ProbeProgress.setPassword, ProbeStepState.running);
+    await _run('Poniendo la contraseña de prueba', (chip) async {
+      final before = await chip.readSecurity();
+      if (before.isLocked) {
+        probe = ProtectionProbe.alreadyLocked(config: before.config);
+        skipped = true;
+        return before;
+      }
+
+      // Escribir con la etiqueta libre: si ya rechaza esto, que rechace
+      // luego no dice nada de la contraseña.
+      payloads = (await chip.readContent()).payloads;
+      try {
+        await chip.writeContent(payloads);
+      } catch (error) {
+        probe = ProtectionProbe.notWritable(config: before.config);
+        skipped = true;
+        return before;
+      }
+
+      return chip.setPassword(
+        probePassword,
+        fromPage:
+            chip.capabilities.firstProtectablePage ?? Type2Chip.firstDataPage,
+      );
+    });
+
+    if (skipped) {
+      probeProgress = const ProbeProgress();
+      notifyListeners();
+      return;
+    }
+    if (error != null) {
+      _probeStep(ProbeProgress.setPassword, ProbeStepState.failed);
+      return;
+    }
+    _probeStep(
+      ProbeProgress.setPassword,
+      ProbeStepState.done,
+      note: 'Puesta la contraseña ${hexBytes(probePassword)}.',
+    );
+
+    _probeStep(ProbeProgress.write, ProbeStepState.running);
+    var accepted = false;
+    await _run('Escribiendo sin la contraseña', (chip) async {
+      try {
+        final report = await chip.writeContent(payloads);
+        accepted = true;
+        return report;
+      } catch (error) {
+        // Rechazar es lo que se espera de una etiqueta protegida.
+        return const WriteReport(bytesWritten: 0, pagesWritten: 0);
+      }
+    });
+    _probeStep(
+      ProbeProgress.write,
+      accepted ? ProbeStepState.failed : ProbeStepState.done,
+      note: accepted
+          ? 'La etiqueta ha dejado escribir.'
+          : 'La etiqueta lo ha rechazado.',
+    );
+
+    _probeStep(ProbeProgress.removePassword, ProbeStepState.running);
+    var unlocked = false;
+    var config = const <int>[];
+    await _run('Quitando la contraseña', (chip) async {
+      final result = await chip.removePassword(probePassword);
+      unlocked = true;
+      config = (await chip.readSecurity()).config;
+      _forgetSecurity();
+      await _refreshInfo(chip);
+      return result;
+    });
+    _probeStep(
+      ProbeProgress.removePassword,
+      unlocked ? ProbeStepState.done : ProbeStepState.failed,
+      note: unlocked
+          ? 'La etiqueta vuelve a estar libre.'
+          : 'La etiqueta sigue bloqueada.',
+    );
+
+    probe = ProtectionProbe.tested(
+      config: config,
+      writeAccepted: accepted,
+      password: probePassword,
+      unlocked: unlocked,
+    );
+    notifyListeners();
+  }
+
+  /// Publica en qué punto va un paso de la prueba de la contraseña.
+  void _probeStep(int index, ProbeStepState state, {String? note}) {
+    probeProgress = probeProgress.at(index, state, note: note);
+    notifyListeners();
+  }
+
   /// Pone [password] y protege desde la primera página que admita el modelo.
-  Future<void> setPassword(List<int> password) =>
+  Future<void> setPassword(List<int> password, {bool protectReading = false}) =>
       _run('Poniendo la contraseña', (chip) async {
         final result = await chip.setPassword(
           password,
           fromPage:
               chip.capabilities.firstProtectablePage ?? Type2Chip.firstDataPage,
+          protectReading: protectReading,
         );
+        readProtected = protectReading;
         _forgetSecurity();
         await _refreshInfo(chip);
         return result;
