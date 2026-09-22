@@ -179,12 +179,34 @@ class _SectionTitle extends StatelessWidget {
           Text(
             group.label.toUpperCase(),
             style: theme.textTheme.labelMedium?.copyWith(
-              color: theme.colorScheme.primary,
+              color: group.danger
+                  ? theme.colorScheme.error
+                  : theme.colorScheme.primary,
               letterSpacing: 1.2,
             ),
           ),
           const SizedBox(height: 2),
-          Text(group.hint, style: theme.textTheme.bodySmall),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (group.danger) ...[
+                Icon(
+                  Icons.warning_amber,
+                  size: 16,
+                  color: theme.colorScheme.error,
+                ),
+                const SizedBox(width: 6),
+              ],
+              Expanded(
+                child: Text(
+                  group.hint,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: group.danger ? theme.colorScheme.error : null,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );

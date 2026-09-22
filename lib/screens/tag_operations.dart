@@ -18,21 +18,33 @@ enum OperationGroup {
   protection('Protección', 'Contraseña y bloqueo de la etiqueta'),
   experiments(
     'Experimentos',
-    'Pruebas que maltratan la etiqueta para ver si cumple lo que declara',
+    'Borran todo lo que tengas grabado y pueden dejar la etiqueta '
+        'inservible. No entres si no sabes lo que haces.',
+    danger: true,
   );
 
-  const OperationGroup(this.label, this.hint);
+  const OperationGroup(this.label, this.hint, {this.danger = false});
 
   /// Nombre del apartado en la lista.
   final String label;
 
   /// Una línea diciendo qué se hace en el apartado.
   final String hint;
+
+  /// Marca el apartado del que se puede salir con la etiqueta rota.
+  final bool danger;
 }
 
 /// Lo que el usuario ha rellenado antes de lanzar la operación.
 class OperationInput {
-  const OperationInput({this.password = const [], this.payloads = const []});
+  const OperationInput({
+    this.password = const [],
+    this.payloads = const [],
+    this.option = false,
+  });
+
+  /// Estado de la casilla que ofrezca la operación, si ofrece alguna.
+  final bool option;
 
   /// Contraseña escrita, byte a byte; vacía si la operación no la pide.
   final List<int> password;
