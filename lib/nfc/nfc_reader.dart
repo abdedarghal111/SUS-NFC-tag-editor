@@ -50,6 +50,12 @@ class NfcReader {
   bool _sessionOpen = false;
   bool _running = false;
 
+  /// Canal de la última etiqueta descubierta, mientras siga en el campo.
+  ///
+  /// Se conserva para retomarla sin reiniciar el modo lector: soltarlo con la
+  /// etiqueta apoyada se la devuelve al sistema, que la atiende por su cuenta.
+  TagTransceiver? _current;
+
   /// Cuenta de acciones lanzadas, para que la espera de retirada de una no
   /// pise el estado de la siguiente.
   int _generation = 0;
@@ -90,6 +96,7 @@ class NfcReader {
     _sessionOpen = false;
     _pending = null;
     _running = false;
+    _current = null;
     phase.value = NfcPhase.idle;
     final completer = _completer;
     _completer = null;
@@ -127,7 +134,7 @@ class NfcReader {
     _completer = completer;
     _attempt = 1;
     phase.value = NfcPhase.waiting;
-    await _restartPolling();
+    await _resume();
     return await completer.future as T;
   }
 
@@ -138,15 +145,61 @@ class NfcReader {
     phase.value = NfcPhase.idle;
   }
 
-  /// Reinicia el modo lector para que el sondeo vuelva a empezar.
+  /// Retoma la etiqueta que sigue apoyada, o espera a que vuelva a aparecer.
+  ///
+  /// Mientras el canal anterior responda se reaprovecha, que es lo que evita
+  /// tener que rearmar el lector con la etiqueta encima.
+  Future<void> _resume() async {
+    final current = _current;
+    final present = current != null && await current.isPresent();
+    if (present) {
+      unawaited(_runPending(current));
+      return;
+    }
+    _current = null;
+    await _restartPolling();
+  }
+
+  /// Vuelve a armar el modo lector para que el sondeo empiece de nuevo.
   ///
   /// Android solo avisa cuando la etiqueta entra en el campo, así que sin este
   /// reinicio una etiqueta ya apoyada en el teléfono no se detectaría.
-  Future<void> _restartPolling() async {
+  ///
+  /// No se suelta el lector: soltarlo con la etiqueta apoyada se la devuelve
+  /// al sistema, que se mete por medio a atenderla. Con [rescue] se vigila que
+  /// el rearmado haya servido, que es lo que hace falta cuando la etiqueta
+  /// sigue encima y se ha perdido la conexión con ella.
+  Future<void> _restartPolling({bool rescue = false}) async {
     if (!_sessionOpen) return;
+    final generation = _generation;
+    try {
+      await NfcManager.instance.startSession(
+        pollingOptions: {NfcPollingOption.iso14443},
+        onDiscovered: _onDiscovered,
+      );
+    } catch (error) {
+      _sessionOpen = false;
+      trace.add('No se ha podido reiniciar la detección: $error');
+      return;
+    }
+    if (rescue) unawaited(_rescuePolling(generation));
+  }
+
+  /// Red de seguridad por si rearmar el modo lector no vuelve a descubrir la
+  /// etiqueta que sigue apoyada.
+  ///
+  /// Entonces sí se suelta el lector y se reserva otra vez, que la recupera
+  /// siempre. Cuesta que el sistema asome, pero es preferible a quedarse
+  /// esperando una etiqueta que está ahí mismo.
+  Future<void> _rescuePolling(int generation) async {
+    await Future<void>.delayed(const Duration(milliseconds: 1500));
+    if (!_sessionOpen || generation != _generation) return;
+    if (_pending == null || _running) return;
+    trace.add('-- la etiqueta no reaparece, se suelta y se vuelve a coger --');
     try {
       await NfcManager.instance.stopSession();
       await Future<void>.delayed(const Duration(milliseconds: 200));
+      if (!_sessionOpen || generation != _generation) return;
       await NfcManager.instance.startSession(
         pollingOptions: {NfcPollingOption.iso14443},
         onDiscovered: _onDiscovered,
@@ -157,9 +210,17 @@ class NfcReader {
     }
   }
 
-  /// Identifica la etiqueta descubierta y le aplica la acción pendiente;
-  /// reintenta desde el principio si la conexión se cae.
+  /// Abre el canal con la etiqueta descubierta y le pasa la acción pendiente.
   Future<void> _onDiscovered(NfcTag tag) async {
+    if (_pending == null || _completer == null || _running) return;
+    final transceiver = TagTransceiver.from(tag, trace);
+    _current = transceiver;
+    await _runPending(transceiver);
+  }
+
+  /// Identifica la etiqueta y le aplica la acción pendiente; reintenta desde
+  /// el principio si la conexión se cae.
+  Future<void> _runPending(TagTransceiver? transceiver) async {
     final action = _pending;
     final completer = _completer;
     if (action == null || completer == null || _running) return;
@@ -168,10 +229,8 @@ class NfcReader {
     _running = true;
     phase.value = NfcPhase.working;
 
-    TagTransceiver? transceiver;
     var willRetry = false;
     try {
-      transceiver = TagTransceiver.from(tag, trace);
       if (transceiver == null) {
         throw const UnsupportedTagError();
       }
@@ -199,10 +258,10 @@ class NfcReader {
     await _waitForRemoval(transceiver);
   }
 
-  /// Vuelve a dejar la acción pendiente y reinicia el sondeo.
+  /// Vuelve a dejar la acción pendiente y rearma el sondeo.
   ///
-  /// La etiqueta suele seguir apoyada, así que el reinicio del modo lector la
-  /// recupera al instante.
+  /// El canal anterior ya no vale, que para eso se ha perdido la conexión; la
+  /// etiqueta suele seguir apoyada, así que se vigila que reaparezca.
   Future<void> _retry(
     ChipAction<Object?> action,
     Completer<Object?> completer,
@@ -215,13 +274,15 @@ class NfcReader {
       '-- se perdió la conexión, intento $_attempt de $_maxAttempts --',
     );
     phase.value = NfcPhase.waiting;
-    await _restartPolling();
+    _current = null;
+    await _restartPolling(rescue: true);
   }
 
   /// Espera a que la etiqueta salga del campo; se rinde a los nueve segundos.
   Future<void> _waitForRemoval(TagTransceiver? transceiver) async {
     final generation = _generation;
     if (transceiver == null || !_sessionOpen) {
+      _current = null;
       phase.value = NfcPhase.idle;
       return;
     }
@@ -230,7 +291,13 @@ class NfcReader {
       await Future<void>.delayed(const Duration(milliseconds: 300));
       // Otra acción ha tomado el relevo: el estado ya es suyo.
       if (!_sessionOpen || generation != _generation) return;
-      if (!await transceiver.isPresent()) break;
+      if (!await transceiver.isPresent()) {
+        // La comprobación pudo cruzarse con una acción nueva sobre la misma
+        // etiqueta: si ha tomado el relevo, el canal ya no es de esta espera.
+        if (generation != _generation) return;
+        if (identical(_current, transceiver)) _current = null;
+        break;
+      }
     }
     if (generation != _generation) return;
     phase.value = NfcPhase.idle;
