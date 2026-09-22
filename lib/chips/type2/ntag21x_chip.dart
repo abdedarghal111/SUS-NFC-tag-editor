@@ -397,26 +397,33 @@ abstract class Ntag21xChip extends Type2Chip
   Future<ProtectionResult> setPassword(
     List<int> password, {
     required int fromPage,
+    bool protectReading = false,
   }) async {
     await _authenticate(password, passwordPage);
 
     final config = await readConfig();
     await writePage(passwordPage, password);
     await writePage(packPage, [...defaultPack, 0x00, 0x00]);
-    await writePage(configPage0, Type2Chip.withAuth0(config, fromPage, layout));
+
+    // El alcance se fija siempre, no se hereda: PROT se queda escrito de una
+    // vez anterior y si no se toca, la contraseña nueva taparía la lectura
+    // sin haberlo pedido. Va antes que AUTH0, que es lo que cierra la puerta.
+    await _writeReadProtection(protectReading);
+
+    await writePage(configPage0, Type2Chip.withAuth0(config, fromPage));
 
     final updated = await readConfig();
-    if (updated[layout.offset] != fromPage) {
+    if (updated[Type2Chip.auth0Offset] != fromPage) {
       throw ProtectionNotAppliedError(
         message:
             'La etiqueta ha aceptado el comando pero no ha guardado la '
             'configuración: la contraseña no ha quedado puesta.',
         expected: fromPage,
         found: hexBytes(updated),
-        offset: layout.offset,
+        offset: Type2Chip.auth0Offset,
       );
     }
-    return ProtectionResult(updated[layout.offset]);
+    return ProtectionResult(updated[Type2Chip.auth0Offset]);
   }
 
   @override
@@ -424,21 +431,25 @@ abstract class Ntag21xChip extends Type2Chip
     await _authenticate(password, configPage0);
 
     final config = await readConfig();
+    // Se baja el alcance mientras todavía hay sesión autenticada, para que la
+    // etiqueta quede como estaba y no arrastre el bit a la próxima
+    // contraseña.
+    await _writeReadProtection(false);
     await writePage(
       configPage0,
-      Type2Chip.withAuth0(config, Type2Chip.noProtection, layout),
+      Type2Chip.withAuth0(config, Type2Chip.noProtection),
     );
 
     final updated = await readConfig();
-    if (updated[layout.offset] != Type2Chip.noProtection) {
+    if (updated[Type2Chip.auth0Offset] != Type2Chip.noProtection) {
       throw ProtectionNotAppliedError(
         message: 'La etiqueta ha aceptado el comando pero sigue bloqueada.',
         expected: Type2Chip.noProtection,
         found: hexBytes(updated),
-        offset: layout.offset,
+        offset: Type2Chip.auth0Offset,
       );
     }
-    return ProtectionResult(updated[layout.offset]);
+    return ProtectionResult(updated[Type2Chip.auth0Offset]);
   }
 
   /// Reúne UID, capacidad, estado de la protección, versión y firma.
@@ -527,18 +538,24 @@ abstract class Ntag21xChip extends Type2Chip
     List<int> password = const [],
   }) async {
     await _authenticate(password, configPage1);
+    await _writeReadProtection(enabled);
 
+    final config = await readConfig();
+    return ProtectionResult(config[Type2Chip.auth0Offset]);
+  }
+
+  /// Pone o quita el bit PROT de ACCESS, conservando el resto del byte.
+  ///
+  /// Los demás bits llevan CFGLCK, el contador y el AUTHLIM, así que se
+  /// releen y se vuelven a escribir tal cual.
+  Future<void> _writeReadProtection(bool enabled) async {
     final page = await readPages(configPage1);
     final access = page[0];
     final updated = enabled
         ? access | Type2Chip.protectReadMask
         : access & ~Type2Chip.protectReadMask;
+    if (updated == access) return;
     await writePage(configPage1, [updated, page[1], page[2], page[3]]);
-
-    final config = await readConfig();
-    return ProtectionResult(config[layout.offset]);
-  }
-
   /// Comprueba si la etiqueta aplica de verdad la protección que declara.
   ///
   /// Leer CFG0 solo cuenta lo que dice; un clon puede guardar el valor y no

@@ -9,9 +9,12 @@ abstract interface class PasswordProtected {
   Future<SecurityStatus> readSecurity({List<int> password});
 
   /// Graba la contraseña y protege a partir de [fromPage].
+  ///
+  /// Con [protectReading] la contraseña hace falta también para leer.
   Future<ProtectionResult> setPassword(
     List<int> password, {
     required int fromPage,
+    bool protectReading,
   });
 
   /// Quita la protección dejando la etiqueta abierta.

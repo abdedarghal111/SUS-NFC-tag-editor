@@ -121,6 +121,7 @@ abstract class ClassicChip extends NfcChip
   Future<ProtectionResult> setPassword(
     List<int> password, {
     required int fromPage,
+    bool protectReading = false,
   }) => throw NotImplementedError(name, 'poner la clave del sector');
 
   @override
