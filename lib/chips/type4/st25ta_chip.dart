@@ -89,6 +89,7 @@ class St25taChip extends IsoDepChip
   Future<ProtectionResult> setPassword(
     List<int> password, {
     required int fromPage,
+    bool protectReading = false,
   }) => throw NotImplementedError(name, 'poner la contraseña');
 
   @override

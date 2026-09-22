@@ -97,6 +97,7 @@ class UltralightEv121Chip extends Type2Chip
   Future<ProtectionResult> setPassword(
     List<int> password, {
     required int fromPage,
+    bool protectReading = false,
   }) => throw NotImplementedError(name, 'poner contraseña');
 
   @override
