@@ -2,7 +2,6 @@
 
 import '../../utils/hex.dart';
 import 'tag_result.dart';
-import '../../chips/type2/auth0_layout.dart';
 import '../../chips/type2/type2_chip.dart';
 
 class TagInfo extends TagResult {
@@ -15,7 +14,8 @@ class TagInfo extends TagResult {
     required this.product,
     required this.hasSignature,
     required this.config,
-    required this.layout,
+    this.cc = const [],
+    this.readProtected = false,
   });
 
   /// Identificador único de 7 bytes.
@@ -41,17 +41,29 @@ class TagInfo extends TagResult {
   /// Los 4 bytes de CFG0 tal y como los devuelve la etiqueta.
   final List<int> config;
 
-  /// Posición de AUTH0 con la que se interpreta CFG0.
-  final Auth0Layout layout;
+  /// Los 4 bytes del Capability Container, en la página 3.
+  final List<int> cc;
+
+  /// Indica que la etiqueta tampoco deja leer sin contraseña.
+  ///
+  /// Cuando es cierto, [config] viene vacío: las páginas de configuración
+  /// caen dentro de la zona protegida y no se pueden mirar.
+  final bool readProtected;
 
   /// Primera página protegida; 0xFF significa que no hay protección.
   int get auth0 => config.length == Type2Chip.pageSize
-      ? config[layout.offset]
+      ? config[Type2Chip.auth0Offset]
       : Type2Chip.noProtection;
 
-  bool get isLocked => auth0 != Type2Chip.noProtection;
+  /// Indica si la etiqueta tiene contraseña puesta.
+  ///
+  /// Que no deje leer ya lo demuestra, aunque no se haya podido ver CFG0.
+  bool get isLocked => readProtected || auth0 != Type2Chip.noProtection;
 
   String get protection {
+    if (readProtected) {
+      return 'Con contraseña, y tampoco cuenta lo que tiene sin ella.';
+    }
     if (!isLocked) return 'Sin contraseña: cualquiera puede escribir.';
     if (auth0 == 0) {
       return 'Con contraseña desde la página 0: la etiqueta entera, '
@@ -80,5 +92,8 @@ class TagInfo extends TagResult {
   }
 
   @override
-  String get summary => 'Etiqueta ${hexBytes(uid)} leída.';
+  String get summary => readProtected
+      ? 'Etiqueta ${hexBytes(uid)}: tiene la lectura protegida y solo ha '
+            'contado su identidad.'
+      : 'Etiqueta ${hexBytes(uid)} leída.';
 }

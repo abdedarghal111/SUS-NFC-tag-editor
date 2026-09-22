@@ -3,6 +3,9 @@
 import '../nfc/tag_transceiver.dart';
 import 'chip_capabilities.dart';
 import 'chip_source.dart';
+import 'results/security_status.dart';
+import 'results/tag_info.dart';
+import 'results/tag_reading.dart';
 
 /// Chip NFC identificado, sea cual sea su familia.
 ///
@@ -43,6 +46,18 @@ abstract class NfcChip {
   /// Falso significa que el soporte está escrito según el datasheet pero nadie
   /// lo ha verificado con hardware en la mano.
   bool get devTested;
+
+  /// Traduce los bytes de la ficha a lo que significan.
+  ///
+  /// Cada familia añade lo suyo sobre lo que aporta la de debajo, así que la
+  /// interfaz no necesita saber qué chip tiene delante para enseñar el
+  /// desglose. Por defecto no traduce nada.
+  List<TagReading> describeTag(TagInfo info) => const [];
+
+  /// Traduce los bytes de la protección a lo que significan.
+  ///
+  /// Solo lo rellenan las familias que tengan contraseña.
+  List<TagReading> describeSecurity(SecurityStatus security) => const [];
 
   /// Canal abierto con la etiqueta.
   ///

@@ -1,11 +1,15 @@
 // Subfamilia NTAG21x: Type 2 con contraseña por AUTH0 y firma de fábrica.
 
+import 'dart:math';
+
 import '../chip_capabilities.dart';
+import '../dictionaries/iso14443_bytes.dart';
+import '../dictionaries/ntag_bytes.dart';
+import '../results/tag_reading.dart';
 import '../ndef/ndef_message_codec.dart';
 import '../ndef/ndef_payload.dart';
 import '../results/auth_result.dart';
-import '../results/capacity_probe.dart';
-import '../results/protection_probe.dart';
+import '../results/memory_test.dart';
 import '../results/protection_result.dart';
 import '../results/security_status.dart';
 import '../results/tag_content.dart';
@@ -75,18 +79,72 @@ abstract class Ntag21xChip extends Type2Chip
   /// Página que guarda el PACK de 2 bytes.
   int get packPage => configPage0 + 3;
 
-  /// Última página de contenido: a partir de ahí empieza la configuración.
-  int get lastContentPage => configPage0 - 3;
-
-  /// Posición de AUTH0 dentro de CFG0 con la que se trabaja.
+  /// Primera página que ya no es contenido, y por tanto tope de los recorridos.
   ///
-  /// El estándar lo pone en el último byte; los clones que miran el primero se
-  /// atienden cambiando este valor desde la interfaz.
-  Auth0Layout layout = Auth0Layout.standard;
+  /// Sale de la memoria que declara el modelo, no de la posición de CFG0: de
+  /// por medio puede haber una página de bloqueo dinámico, que el NTAG210 no
+  /// tiene. En el NTAG216 el contenido va de la 0x04 a la 0xE1.
+  int get lastContentPage =>
+      Type2Chip.firstDataPage + userBytes ~/ Type2Chip.pageSize;
+
+  /// Añade lo propio de la familia a lo que ya traduce el tipo 2.
+  @override
+  List<TagReading> describeTag(TagInfo info) => [
+    ...super.describeTag(info),
+    if (info.manufacturer != null)
+      TagReading(
+        label: 'Fabricante',
+        raw: hexByte(info.manufacturer!),
+        notes: [describeManufacturer(info.manufacturer!)],
+      ),
+    if (info.product != null)
+      TagReading(
+        label: 'Tamaño',
+        raw: hexByte(info.product!),
+        notes: describeStorageSize(info.product!),
+      ),
+    if (info.config.isNotEmpty)
+      TagReading(
+        label: 'CFG0',
+        raw: hexBytes(info.config),
+        notes: describeConfig0(info.config),
+      ),
+  ];
+
+  @override
+  List<TagReading> describeSecurity(SecurityStatus security) => [
+    TagReading(
+      label: 'CFG0',
+      raw: hexBytes(security.config),
+      notes: describeConfig0(security.config),
+    ),
+    TagReading(
+      label: 'ACCESS',
+      raw: hexByte(security.access),
+      notes: describeAccess(security.access),
+    ),
+    TagReading(
+      label: 'PWD · PACK',
+      raw:
+          '${hexBytes(security.storedPassword)} · '
+          '${hexBytes(security.storedPack)}',
+      notes: describeStoredPassword(
+        security.storedPassword,
+        security.storedPack,
+      ),
+    ),
+  ];
+
+  /// Indica que la etiqueta tampoco deja leer sin contraseña.
+  ///
+  /// Lo pone la interfaz cuando la etiqueta ya ha rechazado una lectura: a
+  /// partir de ahí no se la puede sondear antes de autenticarse.
+  bool readProtected = false;
 
   @override
   ChipCapabilities get capabilities => ChipCapabilities(
     maxContentBytes: userBytes,
+    maxTestableBytes: (lastPage + 1) * Type2Chip.pageSize,
     password: const PasswordSpec(length: 4),
     canProtectRead: true,
     hasCounter: hasNfcCounter,

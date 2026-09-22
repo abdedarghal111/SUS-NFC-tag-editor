@@ -3,8 +3,11 @@
 import 'dart:typed_data';
 
 import '../../utils/hex.dart';
+import '../dictionaries/iso14443_bytes.dart';
+import '../dictionaries/t2t_bytes.dart';
 import '../nfc_chip.dart';
-import 'auth0_layout.dart';
+import '../results/tag_info.dart';
+import '../results/tag_reading.dart';
 
 /// Chip de la familia Type 2 (NFC Forum), con READ 0x30 y WRITE 0xA2.
 ///
@@ -23,6 +26,12 @@ abstract class Type2Chip extends NfcChip {
   /// Valor de AUTH0 que desactiva la protección.
   static const int noProtection = 0xFF;
 
+  /// Posición de AUTH0 dentro de CFG0: el último byte.
+  ///
+  /// CFG0 es `[MIRROR, RFUI, MIRROR_PAGE, AUTH0]` (tabla 8 de la hoja de
+  /// datos NTAG213/215/216).
+  static const int auth0Offset = 3;
+
   /// Bit PROT de ACCESS: extiende la protección a la lectura.
   static const int protectReadMask = 0x80;
 
@@ -34,11 +43,38 @@ abstract class Type2Chip extends NfcChip {
       auth0 != noProtection && page >= auth0;
 
   /// Devuelve CFG0 con AUTH0 cambiado y el resto de bytes intactos.
-  static List<int> withAuth0(List<int> config, int auth0, Auth0Layout layout) {
+  static List<int> withAuth0(List<int> config, int auth0) {
     final updated = [...config];
-    updated[layout.offset] = auth0;
+    updated[auth0Offset] = auth0;
     return updated;
   }
+
+  /// Añade lo que dice ISO/IEC 14443-3 y el Capability Container del NFC
+  /// Forum, que valen para cualquier etiqueta de tipo 2.
+  @override
+  List<TagReading> describeTag(TagInfo info) => [
+    TagReading(
+      label: 'UID',
+      raw: hexBytes(info.uid),
+      notes: describeUid(info.uid),
+    ),
+    TagReading(
+      label: 'ATQA',
+      raw: hexBytes(info.atqa),
+      notes: describeAtqa(info.atqa),
+    ),
+    TagReading(
+      label: 'SAK',
+      raw: hexByte(info.sak),
+      notes: describeSak(info.sak),
+    ),
+    if (info.cc.isNotEmpty)
+      TagReading(
+        label: 'CC',
+        raw: hexBytes(info.cc),
+        notes: describeCapabilityContainer(info.cc),
+      ),
+  ];
 
   /// Lee 16 bytes, es decir cuatro páginas consecutivas desde [page].
   Future<Uint8List> readPages(int page) =>
