@@ -19,7 +19,9 @@ import '../../utils/hex.dart';
 import '../errors/capacity_exceeded_error.dart';
 import '../errors/incomplete_response_error.dart';
 import '../errors/nfc_error.dart';
+import '../errors/password_rejected_error.dart';
 import '../errors/protection_not_applied_error.dart';
+import '../errors/read_rejected_error.dart';
 import '../errors/write_rejected_error.dart';
 import '../features/counted.dart';
 import '../features/erasable.dart';
@@ -29,7 +31,6 @@ import '../features/password_protected.dart';
 import '../features/read_protected.dart';
 import '../features/readable.dart';
 import '../features/writable.dart';
-import 'auth0_layout.dart';
 import 'type2_chip.dart';
 
 /// PACK que se graba al poner contraseña.
@@ -176,8 +177,25 @@ abstract class Ntag21xChip extends Type2Chip
   /// Una contraseña vacía significa no autenticar: la etiqueta responde igual
   /// que ante cualquier otra app.
   Future<AuthResult> _authenticate(List<int> password, int page) async {
-    final config = await readConfig();
-    final auth0 = config[layout.offset];
+    // Con la lectura protegida, CFG0 tampoco se deja leer, y su rechazo deja
+    // la etiqueta fuera de la sesión: la contraseña tiene que ir por delante.
+    final hasPassword = password.length == Type2Chip.pageSize;
+    if (readProtected && hasPassword) {
+      return AuthResult.accepted(await sendPassword(password));
+    }
+
+    List<int> config;
+    try {
+      config = await readConfig();
+    } catch (error) {
+      if (!hasPassword) rethrow;
+      // CFG0 está por encima de AUTH0 y la lectura protegida lo tapa; con
+      // contraseña en la mano todavía se puede entrar.
+      tag.note('CFG0 no se deja leer sin contraseña', error);
+      return AuthResult.accepted(await sendPassword(password));
+    }
+
+    final auth0 = config[Type2Chip.auth0Offset];
     if (!Type2Chip.requiresAuth(auth0, page)) {
       return const AuthResult.notProtected();
     }
@@ -190,14 +208,18 @@ abstract class Ntag21xChip extends Type2Chip
 
   @override
   Future<TagContent> readContent({List<int> password = const []}) async {
-    await _unlockIfNeeded(password);
+    final authenticated = await _unlockIfNeeded(password, demand: true);
 
     final bytes = <int>[];
     var page = Type2Chip.firstDataPage;
     NdefLocation? location;
 
     while (page < lastContentPage) {
-      bytes.addAll(await readPages(page));
+      try {
+        bytes.addAll(await readPages(page));
+      } catch (error) {
+        throw _rejectedRead(authenticated, error);
+      }
       page += 4;
       location ??= NdefMessageCodec.locate(bytes);
       if (location != null && bytes.length >= location.end) break;
@@ -218,15 +240,38 @@ abstract class Ntag21xChip extends Type2Chip
     );
   }
 
-  /// Autentica antes de leer si hay protección y se conoce la contraseña.
+  /// Autentica antes de leer cuando se ha dado una contraseña.
   ///
-  /// Un chip protegido puede cortar la conexión en mitad de la lectura en vez
-  /// de responder con un rechazo limpio.
-  Future<void> _unlockIfNeeded(List<int> password) async {
-    if (password.length != Type2Chip.pageSize) return;
-    final config = await readConfig();
-    if (config[layout.offset] == Type2Chip.noProtection) return;
-    await sendPassword(password);
+  /// La contraseña va por delante de cualquier lectura: con la protección de
+  /// lectura puesta, ni CFG0 se puede mirar para saber si hace falta.
+  ///
+  /// Entrada: la contraseña, y [demand] para exigir que la acepte. Salida: si
+  /// la etiqueta la ha aceptado. Lanza [PasswordRejectedError] con [demand] si
+  /// la rechaza, porque a partir de ahí no queda sesión con la que seguir.
+  Future<bool> _unlockIfNeeded(
+    List<int> password, {
+    bool demand = false,
+  }) async {
+    if (password.length != Type2Chip.pageSize) return false;
+    try {
+      await sendPassword(password);
+      return true;
+    } catch (error) {
+      if (NfcError.isConnectionLost(error)) rethrow;
+      if (demand) throw PasswordRejectedError(cause: error.toString());
+      tag.note('la etiqueta no ha aceptado la contraseña', error);
+      return false;
+    }
+  }
+
+  /// Traduce el rechazo de una lectura a un error que diga qué hacer.
+  NfcError _rejectedRead(bool authenticated, Object error) {
+    if (error is NfcError) return error;
+    if (NfcError.isConnectionLost(error)) return NfcError.from(error);
+    return ReadRejectedError(
+      authenticated: authenticated,
+      cause: error.toString(),
+    );
   }
 
   @override
@@ -300,7 +345,15 @@ abstract class Ntag21xChip extends Type2Chip
   /// etiqueta a un bloqueo permanente.
   @override
   Future<SecurityStatus> readSecurity({List<int> password = const []}) async {
-    final bytes = await readPages(configPage0);
+    // Con la lectura protegida ni las páginas de configuración se dejan leer.
+    final unlocked = await _unlockIfNeeded(password);
+
+    List<int> bytes;
+    try {
+      bytes = await readPages(configPage0);
+    } catch (error) {
+      throw _rejectedRead(unlocked, error);
+    }
     if (bytes.length < 16) {
       throw IncompleteResponseError(
         command: 'READ ${hexByte(configPage0)}',
@@ -310,14 +363,17 @@ abstract class Ntag21xChip extends Type2Chip
     }
 
     final config = bytes.sublist(0, Type2Chip.pageSize);
-    final auth0 = config[layout.offset];
+    final auth0 = config[Type2Chip.auth0Offset];
     final access = bytes[4];
+    // Sin contraseña que probar no se prueba nada, y sin protección tampoco
+    // habría contra qué: la etiqueta acepta cualquier cosa.
     final canTest =
+        password.length == Type2Chip.pageSize &&
         auth0 != Type2Chip.noProtection &&
         (access & Type2Chip.authLimitMask) == 0;
 
-    var correct = false;
-    if (canTest) {
+    var correct = unlocked;
+    if (!unlocked && canTest) {
       try {
         await sendPassword(password);
         correct = true;
@@ -329,11 +385,10 @@ abstract class Ntag21xChip extends Type2Chip
 
     return SecurityStatus(
       config: config,
-      layout: layout,
       access: access,
       storedPassword: bytes.sublist(8, 12),
       storedPack: bytes.sublist(12, 14),
-      passwordChecked: canTest,
+      passwordChecked: unlocked || canTest,
       passwordCorrect: correct,
     );
   }
@@ -391,9 +446,14 @@ abstract class Ntag21xChip extends Type2Chip
   /// GET_VERSION y READ_SIG son los comandos que más clones rechazan, y un
   /// rechazo corta la conexión, así que van al final y sus fallos se absorben.
   @override
-  Future<TagInfo> readInfo() async {
-    final capacity = await _readCapacity();
-    final config = await readConfig();
+  Future<TagInfo> readInfo({List<int> password = const []}) async {
+    await _unlockIfNeeded(password, demand: true);
+
+    // Las páginas 0-3 se leen de una vez: son las que ninguna protección
+    // tapa, y de ahí salen el CC y la capacidad que declara.
+    final header = await readPages(0x00);
+    final cc = header.length >= 16 ? header.sublist(12, 16) : const <int>[];
+    final capacity = header.length >= 15 ? header[14] * 8 : 0;
 
     int? manufacturer;
     int? product;
@@ -415,6 +475,18 @@ abstract class Ntag21xChip extends Type2Chip
       tag.note('la etiqueta no responde a READ_SIG', error);
     }
 
+    // CFG0 va el último: cae dentro de la zona protegida, así que es lo
+    // primero que rechaza una etiqueta que no deja leer, y su rechazo corta
+    // la conversación. Todo lo anterior ya está recogido.
+    var config = const <int>[];
+    var readProtected = false;
+    try {
+      config = await readConfig();
+    } catch (error) {
+      tag.note('CFG0 no se deja leer: la lectura está protegida', error);
+      readProtected = true;
+    }
+
     return TagInfo(
       uid: tag.uid,
       atqa: tag.atqa,
@@ -424,7 +496,8 @@ abstract class Ntag21xChip extends Type2Chip
       product: product,
       hasSignature: hasSignature,
       config: config,
-      layout: layout,
+      cc: cc,
+      readProtected: readProtected,
     );
   }
 
