@@ -95,7 +95,6 @@ class TagController extends ChangeNotifier {
   void _forgetTag() {
     info = null;
     content = null;
-    capacity = null;
     counter = null;
     _forgetSecurity();
   }
@@ -246,26 +245,51 @@ class TagController extends ChangeNotifier {
   Future<void> readSecurity(List<int> password) =>
       _run('Mirando la protección', (chip) async {
         security = await chip.readSecurity(password: password);
+        readProtected = security!.protectsReading;
         return security!;
       });
 
-  /// Mide la memoria real escribiendo en todas las páginas de contenido.
-  ///
-  /// Se lleva por delante lo que hubiera grabado.
-  Future<void> measureCapacity() => _run('Midiendo la memoria', (chip) async {
-    capacity = await chip.measureCapacity();
-    content = const TagContent(payloads: [], usedBytes: 0);
-    await _refreshInfo(chip);
-    return capacity!;
-  });
+  /// Cómo van las páginas de la prueba de la memoria.
+  MemoryProgress memoryProgress = const MemoryProgress();
 
-  /// Comprueba si la etiqueta aplica de verdad la protección que declara.
-  Future<void> probeProtection() =>
-      _run('Comprobando la protección', (chip) async {
-        probe = await chip.probeProtection();
-        await _refreshInfo(chip);
-        return probe!;
-      });
+  /// Resultado de la última prueba de la memoria.
+  MemoryTest? memory;
+
+  /// Páginas que se probarían con [bytes], recortado a lo que cabe.
+  int get _memoryPages => capabilities.maxTestableBytes ~/ Type2Chip.pageSize;
+
+  /// Escribe bytes al azar en [bytes], los relee y los borra.
+  ///
+  /// La rejilla se reinicia antes de pedir la etiqueta, para que se vea desde
+  /// el primer momento cuántas páginas se van a probar.
+  Future<void> testMemory() {
+    memory = null;
+    memoryProgress = MemoryProgress(
+      blocks: List.filled(_memoryPages, MemoryBlockState.pending),
+    );
+    notifyListeners();
+
+    return _run('Probando la memoria', (chip) async {
+      final result = await chip.testMemory(
+        onBlock: (index, state) {
+          memoryProgress = memoryProgress.at(index, state);
+          notifyListeners();
+        },
+        onPhase: (phase) {
+          memoryProgress = memoryProgress.inPhase(
+            phase,
+            reset: phase != MemoryPhase.done,
+          );
+          notifyListeners();
+        },
+      );
+
+      memory = result;
+      content = const TagContent(payloads: [], usedBytes: 0);
+      await _refreshInfo(chip);
+      return result;
+    });
+  }
 
   /// Pone [password] y protege desde la primera página que admita el modelo.
   Future<void> setPassword(List<int> password) =>
