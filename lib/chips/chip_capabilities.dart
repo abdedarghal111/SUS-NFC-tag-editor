@@ -13,6 +13,7 @@ class PasswordSpec {
 class ChipCapabilities {
   const ChipCapabilities({
     this.maxContentBytes = 0,
+    this.maxTestableBytes = 0,
     this.password,
     this.canProtectRead = false,
     this.hasCounter = false,
@@ -21,6 +22,12 @@ class ChipCapabilities {
 
   /// Bytes de contenido que admite la etiqueta.
   final int maxContentBytes;
+
+  /// Bytes de memoria direccionable, desde la primera página hasta la última.
+  ///
+  /// Incluye la cabecera, el bloqueo y la configuración, que se recorren para
+  /// ver la etiqueta entera pero nunca se escriben.
+  final int maxTestableBytes;
 
   /// Forma de su contraseña, o null si el modelo no tiene.
   final PasswordSpec? password;

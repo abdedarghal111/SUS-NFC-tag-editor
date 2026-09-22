@@ -564,70 +564,199 @@ abstract class Ntag21xChip extends Type2Chip
     await writePage(configPage1, [updated, page[1], page[2], page[3]]);
   }
 
-  /// Mide la memoria que la etiqueta tiene de verdad, escribiendo una marca
-  /// distinta en cada página de contenido.
+  /// Prueba la memoria escribiendo bytes al azar, releyéndolos y borrándolos.
   ///
-  /// La memoria de más de un clon es la misma repetida: al pasarse del final
-  /// vuelve a la primera página, y ahí se le pilla. La prueba se queda en la
-  /// zona de contenido y la deja vacía, sin tocar los bits de bloqueo.
-  Future<CapacityProbe> measureCapacity() async {
+  /// Entrada: cuántos bytes probar y un aviso por cada página que cambia de
+  /// estado. Salida: el recuento de las tres fases. Lanza [WriteRejectedError]
+  /// si la etiqueta está protegida.
+  Future<MemoryTest> testMemory({
+    required void Function(int index, MemoryBlockState state) onBlock,
+    required void Function(MemoryPhase phase) onPhase,
+  }) async {
     final auth = await _authenticate(const [], Type2Chip.firstDataPage);
     if (auth.wasProtected) {
       throw WriteRejectedError(
-        operation: 'la medición de la memoria',
+        operation: 'la prueba de la memoria',
         cause: 'AUTH0 protege la zona de contenido.',
       );
     }
 
-    final declared = await _readCapacity();
-    final first = Type2Chip.firstDataPage;
-    await writePage(first, _stamp(first));
+    // Se recorre la etiqueta entera para verla completa, pero solo se toca la
+    // zona de contenido: en la cabecera, el bloqueo y la configuración, unos
+    // bytes al azar la romperían para siempre.
+    const first = 0;
+    final pages = lastPage + 1;
+    bool writable(int index) =>
+        index >= Type2Chip.firstDataPage && index < lastContentPage;
 
-    var lastGood = first;
-    var wrapped = false;
-    var rejected = false;
+    var skipped = 0;
+    for (var i = 0; i < pages; i++) {
+      if (writable(i)) continue;
+      skipped++;
+      onBlock(i, MemoryBlockState.skipped);
+    }
+    final tested = pages - skipped;
 
-    for (var page = first + 1; page < lastContentPage; page++) {
-      try {
-        await writePage(page, _stamp(page));
-      } catch (error) {
-        tag.note('la etiqueta no deja escribir más allá de $lastGood', error);
-        rejected = true;
-        break;
-      }
-      // Si la memoria da la vuelta, esta página es en realidad la primera.
-      final start = await readPages(first);
-      if (!_hasStamp(start, first)) {
-        wrapped = true;
-        break;
-      }
-      lastGood = page;
+    final random = Random();
+    final expected = [
+      for (var i = 0; i < pages; i++)
+        List<int>.generate(Type2Chip.pageSize, (_) => random.nextInt(256)),
+    ];
+
+    int? firstBad;
+    var aborted = false;
+    // Páginas que han fallado en cualquiera de las tres fases: al terminar se
+    // enseñan todas en rojo, no solo las de la última.
+    final failed = <int>{};
+
+    void markBad(int index) {
+      firstBad ??= first + index;
+      failed.add(index);
     }
 
+    /// Escribe [values] página a página. Un rechazo se anota y se sigue; una
+    /// caída de conexión corta la prueba, porque a partir de ahí fallaría
+    /// todo y pintaría de rojo páginas que nadie ha llegado a probar.
+    Future<int> writeAll(List<List<int>> values) async {
+      var done = 0;
+      for (var i = 0; i < pages; i++) {
+        if (!writable(i)) continue;
+        onBlock(i, MemoryBlockState.busy);
+        try {
+          await writePage(first + i, values[i]);
+          done++;
+          onBlock(i, MemoryBlockState.good);
+        } catch (error) {
+          if (NfcError.isConnectionLost(error)) {
+            tag.note('la etiqueta se ha ido en la página ${first + i}', error);
+            onBlock(i, MemoryBlockState.pending);
+            aborted = true;
+            return done;
+          }
+          tag.note('la etiqueta rechaza la página ${first + i}', error);
+          markBad(i);
+          onBlock(i, MemoryBlockState.bad);
+        }
+      }
+      return done;
+    }
+
+    onPhase(MemoryPhase.writing);
+    final written = await writeAll(expected);
+
+    var verified = 0;
+    var erased = 0;
+
+    if (!aborted) {
+      onPhase(MemoryPhase.reading);
+      final read = await _verify(
+        first,
+        pages,
+        expected,
+        writable: writable,
+        onBlock: onBlock,
+        onBad: markBad,
+      );
+      verified = read.good;
+      aborted = read.aborted;
+    }
+
+    if (!aborted) {
+      onPhase(MemoryPhase.erasing);
+      final zeros = List.filled(pages, List.filled(Type2Chip.pageSize, 0));
+      await writeAll(zeros);
+      if (!aborted) {
+        final read = await _verify(
+          first,
+          pages,
+          zeros,
+          writable: writable,
+          onBlock: onBlock,
+          onBad: markBad,
+        );
+        erased = read.good;
+        aborted = read.aborted;
+      }
+    }
+
+    // La etiqueta se queda con un mensaje vacío pero válido, no a ceros.
     try {
-      await writePage(first, NdefMessageCodec.emptyBlock());
+      await writePage(Type2Chip.firstDataPage, NdefMessageCodec.emptyBlock());
     } catch (error) {
-      tag.note('la etiqueta no se ha podido dejar vacía', error);
+      tag.note('la etiqueta no se ha podido dejar utilizable', error);
     }
 
-    final pages = lastGood - first + 1;
-    return CapacityProbe(
-      declaredBytes: declared,
-      measuredBytes: pages * Type2Chip.pageSize,
-      lastGoodPage: lastGood,
-      wrapped: wrapped,
-      rejected: rejected,
+    // Recuento final: rojo el que haya fallado en alguna fase, verde el que
+    // ha aguantado las tres.
+    if (!aborted) {
+      for (var i = 0; i < pages; i++) {
+        if (!writable(i)) continue;
+        onBlock(
+          i,
+          failed.contains(i) ? MemoryBlockState.bad : MemoryBlockState.good,
+        );
+      }
+    }
+    onPhase(MemoryPhase.done);
+    return MemoryTest(
+      declaredBytes: await _readCapacity(),
+      writtenPages: written,
+      verifiedPages: verified,
+      erasedPages: erased,
+      totalPages: tested,
+      skippedPages: skipped,
+      firstBadPage: firstBad,
+      aborted: aborted,
     );
   }
 
-  /// Marca que identifica a una página dentro de la memoria.
-  List<int> _stamp(int page) => [0xC5, page, 0xA3, page ^ 0xFF];
+  /// Relee las páginas probadas y las compara con lo que deberían tener.
+  ///
+  /// Salida: cuántas han devuelto exactamente lo esperado.
+  Future<({int good, bool aborted})> _verify(
+    int first,
+    int pages,
+    List<List<int>> expected, {
+    required bool Function(int index) writable,
+    required void Function(int index, MemoryBlockState state) onBlock,
+    required void Function(int index) onBad,
+  }) async {
+    var good = 0;
+    // READ devuelve cuatro páginas de una vez: se aprovecha el viaje.
+    for (var i = 0; i < pages; i += 4) {
+      List<int> chunk;
+      try {
+        chunk = await readPages(first + i);
+      } catch (error) {
+        if (NfcError.isConnectionLost(error)) {
+          tag.note('la etiqueta se ha ido releyendo ${first + i}', error);
+          return (good: good, aborted: true);
+        }
+        tag.note('la etiqueta rechaza releer desde ${first + i}', error);
+        chunk = const [];
+      }
+      for (var j = i; j < i + 4 && j < pages; j++) {
+        if (!writable(j)) continue;
+        final offset = (j - i) * Type2Chip.pageSize;
+        final read = chunk.length >= offset + Type2Chip.pageSize
+            ? chunk.sublist(offset, offset + Type2Chip.pageSize)
+            : const <int>[];
+        final ok = _sameBytes(read, expected[j]);
+        if (ok) {
+          good++;
+        } else {
+          onBad(j);
+        }
+        onBlock(j, ok ? MemoryBlockState.good : MemoryBlockState.bad);
+      }
+    }
+    return (good: good, aborted: false);
+  }
 
-  /// Indica si la lectura empieza por la marca de [page].
-  bool _hasStamp(List<int> bytes, int page) {
-    final stamp = _stamp(page);
-    for (var i = 0; i < Type2Chip.pageSize; i++) {
-      if (bytes[i] != stamp[i]) return false;
+  bool _sameBytes(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
     }
     return true;
   }
