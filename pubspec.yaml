@@ -2,7 +2,7 @@ name: sus_nfc_tag_editor
 description: "SUS NFC Tag Editor: lector y editor versátil de etiquetas NTAG216 de dudosa procedencia."
 publish_to: 'none'
 
-version: 1.0.0+1
+version: 0.5.0+1
 
 environment:
   sdk: ^3.12.2
