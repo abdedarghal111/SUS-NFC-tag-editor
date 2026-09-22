@@ -50,6 +50,10 @@ class NfcReader {
   bool _sessionOpen = false;
   bool _running = false;
 
+  /// Cuenta de acciones lanzadas, para que la espera de retirada de una no
+  /// pise el estado de la siguiente.
+  int _generation = 0;
+
   /// Indica si hay una acción esperando etiqueta o ejecutándose.
   bool get isBusy => _pending != null || _running;
 
@@ -116,6 +120,7 @@ class NfcReader {
     await open();
 
     trace.clear();
+    _generation++;
     final completer = Completer<Object?>();
     _identify = identify;
     _pending = (tag, identified) async => await action(tag, identified);
@@ -215,6 +220,7 @@ class NfcReader {
 
   /// Espera a que la etiqueta salga del campo; se rinde a los nueve segundos.
   Future<void> _waitForRemoval(TagTransceiver? transceiver) async {
+    final generation = _generation;
     if (transceiver == null || !_sessionOpen) {
       phase.value = NfcPhase.idle;
       return;
@@ -222,9 +228,11 @@ class NfcReader {
     phase.value = NfcPhase.removing;
     for (var attempt = 0; attempt < 30; attempt++) {
       await Future<void>.delayed(const Duration(milliseconds: 300));
-      if (!_sessionOpen) return;
+      // Otra acción ha tomado el relevo: el estado ya es suyo.
+      if (!_sessionOpen || generation != _generation) return;
       if (!await transceiver.isPresent()) break;
     }
+    if (generation != _generation) return;
     phase.value = NfcPhase.idle;
   }
 }
