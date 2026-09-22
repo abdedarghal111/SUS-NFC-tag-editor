@@ -2,7 +2,6 @@
 
 import '../../utils/hex.dart';
 import 'tag_result.dart';
-import '../../chips/type2/auth0_layout.dart';
 import '../../chips/type2/type2_chip.dart';
 
 /// Protección que tiene puesta la etiqueta y hasta dónde llega.
@@ -12,7 +11,6 @@ import '../../chips/type2/type2_chip.dart';
 class SecurityStatus extends TagResult {
   const SecurityStatus({
     required this.config,
-    required this.layout,
     required this.access,
     required this.storedPassword,
     required this.storedPack,
@@ -23,11 +21,8 @@ class SecurityStatus extends TagResult {
   /// Los 4 bytes de CFG0 tal y como los devuelve la etiqueta.
   final List<int> config;
 
-  /// Posición de AUTH0 con la que se interpreta CFG0.
-  final Auth0Layout layout;
-
   /// Primera página protegida; 0xFF significa que no hay protección.
-  int get auth0 => config[layout.offset];
+  int get auth0 => config[Type2Chip.auth0Offset];
 
   /// Byte ACCESS: el bit 7 es PROT y los bits 0-2 son AUTHLIM.
   final int access;
@@ -49,7 +44,15 @@ class SecurityStatus extends TagResult {
 
   /// Indica si la protección alcanza también a la lectura, no solo a la
   /// escritura.
-  bool get protectsReading => access & Type2Chip.protectReadMask != 0;
+  bool get protectsReading =>
+      isLocked && access & Type2Chip.protectReadMask != 0;
+
+  /// Indica si el bit PROT está puesto, aplique o no.
+  ///
+  /// Sin AUTH0 protegiendo nada el bit se queda escrito pero no impide nada.
+  /// Sirve para avisar de que la próxima contraseña tapará también la
+  /// lectura.
+  bool get readProtectionArmed => access & Type2Chip.protectReadMask != 0;
 
   /// Número de fallos tolerados antes del bloqueo permanente; 0 es ilimitado.
   int get failedAttemptsLimit => access & Type2Chip.authLimitMask;

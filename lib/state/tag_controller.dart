@@ -10,22 +10,26 @@ import '../chips/chip_identification.dart';
 import '../chips/errors/chip_not_available_error.dart';
 import '../chips/errors/nfc_error.dart';
 import '../chips/errors/nfc_unavailable_error.dart';
+import '../chips/errors/read_rejected_error.dart';
 import '../chips/errors/unknown_chip_error.dart';
 import '../chips/errors/unsupported_feature_error.dart';
 import '../chips/nfc_chip.dart';
-import '../chips/type2/auth0_layout.dart';
 import '../chips/type2/ntag21x_chip.dart';
 import '../chips/type2/type2_chip.dart';
 import '../chips/ndef/ndef_payload.dart';
 import '../nfc/nfc_reader.dart';
 import '../nfc/tag_transceiver.dart';
-import '../chips/results/capacity_probe.dart';
+import '../utils/hex.dart';
 import '../chips/results/counter_result.dart';
+import '../chips/results/memory_test.dart';
+import '../chips/results/probe_progress.dart';
 import '../chips/results/protection_probe.dart';
 import '../chips/results/security_status.dart';
 import '../chips/results/tag_content.dart';
 import '../chips/results/tag_info.dart';
+import '../chips/results/tag_reading.dart';
 import '../chips/results/tag_result.dart';
+import '../chips/results/write_report.dart';
 
 /// Guarda lo último que contestó la etiqueta y expone las acciones de la
 /// interfaz como peticiones al chip que haya delante.
@@ -103,9 +107,31 @@ class TagController extends ChangeNotifier {
     probe = null;
   }
 
-  /// Posición de AUTH0 con la que se trabaja; se puede cambiar para averiguar
-  /// cuál honra un clon.
-  Auth0Layout layout = Auth0Layout.standard;
+  /// Los bytes de la ficha traducidos por el chip que haya delante.
+  ///
+  /// Cada familia aporta los suyos, así que la interfaz los pinta sin saber
+  /// con qué modelo trabaja.
+  List<TagReading> get readings {
+    final ficha = info;
+    final found = chip;
+    if (ficha == null || found == null) return const [];
+    return found.describeTag(ficha);
+  }
+
+  /// Los bytes de la protección traducidos por el chip que haya delante.
+  List<TagReading> get securityReadings {
+    final status = security;
+    final found = chip;
+    if (status == null || found == null) return const [];
+    return found.describeSecurity(status);
+  }
+
+  /// Indica que la etiqueta ha rechazado leer y hay que autenticarse antes de
+  /// sondearla.
+  ///
+  /// Su rechazo tumba la sesión, así que en cuanto se sabe no se la vuelve a
+  /// sondear sin contraseña por delante.
+  bool readProtected = false;
 
   /// Última contraseña escrita, para no volver a teclearla en cada operación
   /// de protección.
@@ -152,16 +178,9 @@ class TagController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Cambia la posición de AUTH0 con la que se trabaja y olvida lo leído sobre
-  /// la protección.
-  void useLayout(Auth0Layout value) {
-    layout = value;
-    _forgetSecurity();
-    notifyListeners();
-  }
-
   /// Descarta el error pendiente.
   void dismissError() {
+    if (error == null) return;
     error = null;
     notifyListeners();
   }
@@ -325,11 +344,12 @@ class TagController extends ChangeNotifier {
         if (found is! Ntag21xChip) {
           throw UnsupportedFeatureError(found.name, 'esta operación');
         }
-        found.layout = layout;
+        found.readProtected = readProtected;
         return action(found);
       });
       lastMessage = result.summary;
     } on NfcError catch (failure) {
+      if (failure is ReadRejectedError) readProtected = true;
       error = failure;
     } catch (failure) {
       error = NfcError.from(failure);
