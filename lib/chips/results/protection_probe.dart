@@ -83,7 +83,8 @@ class ProtectionProbe extends TagResult {
   String? get warning => skipped || unlocked
       ? null
       : 'La etiqueta se ha quedado bloqueada con la contraseña '
-            '${hexBytes(password)}. Quítasela con ese valor.';
+            '${String.fromCharCodes(password)} (${hexBytes(password)}). '
+            'Tecléala en «Quitar la contraseña» para desbloquearla.';
 
   @override
   String get summary => skipped ? 'Prueba no realizada.' : verdict;

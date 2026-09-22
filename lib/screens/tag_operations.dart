@@ -3,7 +3,9 @@
 import 'package:flutter/material.dart';
 
 import '../chips/ndef/ndef_payload.dart';
+import '../chips/type2/ntag21x_chip.dart';
 import '../state/tag_controller.dart';
+import '../utils/hex.dart';
 import '../widgets/memory_card.dart';
 import '../widgets/memory_grid.dart';
 import '../widgets/probe_card.dart';
@@ -316,14 +318,19 @@ List<TagOperation> operationsFor(TagController controller) {
         subtitle: 'Pone una contraseña, intenta escribir sin ella y la quita',
         description:
             'Un clon puede guardar la contraseña y luego no hacerle caso. '
-            'La prueba pone una contraseña conocida, intenta escribir sin '
-            'autenticarse y la quita al terminar. Si la escritura pasa, la '
-            'protección es de adorno. Son tres pasos y cada uno necesita su '
-            'propia pasada: la etiqueta te la pedirá tres veces.',
+            'La prueba pone la contraseña ${String.fromCharCodes(probePassword)} '
+            '(${hexBytes(probePassword)}), intenta escribir sin autenticarse '
+            'y la quita al terminar. Si la escritura pasa, la protección es '
+            'de adorno. Son tres pasos y entre uno y otro hay que separar la '
+            'etiqueta del teléfono y volver a apoyarla: solo al quedarse sin '
+            'corriente vuelve a aplicar la contraseña. La app te lo va '
+            'pidiendo por el camino.',
         warning:
             'La prueba pone y quita una contraseña de verdad. Si la etiqueta '
-            'la acepta pero luego no deja quitarla, se queda bloqueada. Con '
-            'una etiqueta ya bloqueada la prueba no se hace.',
+            'la acepta pero luego no deja quitarla, se queda bloqueada con '
+            '${String.fromCharCodes(probePassword)}: esa es la que hay que '
+            'teclear para desbloquearla a mano. Con una etiqueta ya bloqueada '
+            'la prueba no se hace.',
         run: (controller, input) => controller.probeProtection(),
         progress: (controller) =>
             ProbeSteps(progress: controller.probeProgress),

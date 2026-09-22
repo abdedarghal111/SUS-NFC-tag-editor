@@ -153,6 +153,7 @@ class TagController extends ChangeNotifier {
   /// Indica si hay una operación esperando etiqueta o en marcha.
   bool get busy =>
       phase == NfcPhase.waiting ||
+      phase == NfcPhase.lifting ||
       phase == NfcPhase.working ||
       _action.isNotEmpty;
 
@@ -293,9 +294,9 @@ class TagController extends ChangeNotifier {
 
   /// Pone una contraseña, intenta escribir sin ella y la quita.
   ///
-  /// Cada paso va en su propia sesión: la etiqueta no aplica AUTH0 hasta que
-  /// se la vuelve a seleccionar, así que probar en la misma pasada en la que
-  /// se pone la contraseña daría siempre que no protege.
+  /// Cada paso vuelve a enganchar la etiqueta desde cero: no aplica AUTH0
+  /// hasta que se la selecciona de nuevo, así que probar por el mismo canal
+  /// en el que se ha puesto la contraseña daría siempre que no protege.
   Future<void> probeProtection() async {
     probe = null;
     probeProgress = const ProbeProgress();
@@ -305,7 +306,7 @@ class TagController extends ChangeNotifier {
     var skipped = false;
 
     _probeStep(ProbeProgress.setPassword, ProbeStepState.running);
-    await _run('Poniendo la contraseña de prueba', (chip) async {
+    await _run('Poniendo la contraseña de prueba', fresh: true, (chip) async {
       final before = await chip.readSecurity();
       if (before.isLocked) {
         probe = ProtectionProbe.alreadyLocked(config: before.config);
@@ -343,12 +344,14 @@ class TagController extends ChangeNotifier {
     _probeStep(
       ProbeProgress.setPassword,
       ProbeStepState.done,
-      note: 'Puesta la contraseña ${hexBytes(probePassword)}.',
+      note:
+          'Puesta la contraseña ${String.fromCharCodes(probePassword)} '
+          '(${hexBytes(probePassword)}).',
     );
 
     _probeStep(ProbeProgress.write, ProbeStepState.running);
     var accepted = false;
-    await _run('Escribiendo sin la contraseña', (chip) async {
+    await _run('Escribiendo sin la contraseña', fresh: true, (chip) async {
       try {
         final report = await chip.writeContent(payloads);
         accepted = true;
@@ -369,7 +372,7 @@ class TagController extends ChangeNotifier {
     _probeStep(ProbeProgress.removePassword, ProbeStepState.running);
     var unlocked = false;
     var config = const <int>[];
-    await _run('Quitando la contraseña', (chip) async {
+    await _run('Quitando la contraseña', fresh: true, (chip) async {
       final result = await chip.removePassword(probePassword);
       unlocked = true;
       config = (await chip.readSecurity()).config;
@@ -471,31 +474,36 @@ class TagController extends ChangeNotifier {
   ///
   /// Comprueba antes que el chip sea un NTAG21x, la única familia que la app
   /// sabe manejar.
+  ///
+  /// Con [fresh] la etiqueta se vuelve a seleccionar antes de empezar, que es
+  /// lo que hace que aplique la protección que tenga guardada.
   Future<void> _run(
     String title,
-    Future<TagResult> Function(Ntag21xChip chip) action,
-  ) async {
+    Future<TagResult> Function(Ntag21xChip chip) action, {
+    bool fresh = false,
+  }) async {
     if (busy) return;
     error = null;
     lastMessage = null;
     _action = title;
     notifyListeners();
     try {
-      final result = await _reader.execute(identify: chosenModel == null, (
-        tag,
-        identified,
-      ) async {
-        final found = _resolve(tag, identified);
-        chip = found;
-        if (!found.enabled) {
-          throw ChipNotAvailableError(found.name);
-        }
-        if (found is! Ntag21xChip) {
-          throw UnsupportedFeatureError(found.name, 'esta operación');
-        }
-        found.readProtected = readProtected;
-        return action(found);
-      });
+      final result = await _reader.execute(
+        identify: chosenModel == null,
+        fresh: fresh,
+        (tag, identified) async {
+          final found = _resolve(tag, identified);
+          chip = found;
+          if (!found.enabled) {
+            throw ChipNotAvailableError(found.name);
+          }
+          if (found is! Ntag21xChip) {
+            throw UnsupportedFeatureError(found.name, 'esta operación');
+          }
+          found.readProtected = readProtected;
+          return action(found);
+        },
+      );
       lastMessage = result.summary;
     } on NfcError catch (failure) {
       if (failure is ReadRejectedError) readProtected = true;

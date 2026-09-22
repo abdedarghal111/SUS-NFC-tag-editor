@@ -14,7 +14,10 @@ import '../chips/errors/unsupported_tag_error.dart';
 import 'tag_transceiver.dart';
 
 /// Momento del diálogo con la etiqueta, para que la interfaz sepa qué pedir.
-enum NfcPhase { idle, waiting, working, removing }
+///
+/// [lifting] es la espera a que el usuario retire la etiqueta para volver a
+/// ponerla, que es lo que hace falta entre pasos de la prueba de contraseña.
+enum NfcPhase { idle, waiting, lifting, working, removing }
 
 /// Lo que se quiere hacer con la etiqueta cuando aparezca.
 typedef ChipAction<T> =
@@ -118,9 +121,19 @@ class NfcReader {
   /// cuando ya lo ha elegido el usuario: así no se manda GET_VERSION, el
   /// comando que más clones rechazan cortando la conexión.
   ///
+  /// Con [fresh] en true la etiqueta tiene que pasar por el aire antes de
+  /// empezar: si está apoyada se pide retirarla y volver a ponerla. Hace falta
+  /// para lo que dependa de la configuración de seguridad, porque la etiqueta
+  /// no aplica AUTH0 hasta que se la alimenta de nuevo, así que sin ese corte
+  /// una contraseña recién puesta parecería no servir de nada.
+  ///
   /// Lanza [NfcError] si el NFC no está disponible, si ya hay otra acción en
   /// marcha o si la etiqueta rechaza algún comando.
-  Future<T> execute<T>(ChipAction<T> action, {bool identify = true}) async {
+  Future<T> execute<T>(
+    ChipAction<T> action, {
+    bool identify = true,
+    bool fresh = false,
+  }) async {
     if (isBusy) {
       throw const ReaderBusyError();
     }
@@ -134,29 +147,62 @@ class NfcReader {
     _completer = completer;
     _attempt = 1;
     phase.value = NfcPhase.waiting;
-    await _resume();
+    await _resume(fresh: fresh);
     return await completer.future as T;
   }
 
   /// Descarta la acción pendiente sin soltar el lector.
+  ///
+  /// A quien la estuviera esperando se le avisa: si no, se quedaría colgado
+  /// esperando una etiqueta que ya nadie va a buscar.
   void cancel() {
     _pending = null;
+    final completer = _completer;
     _completer = null;
     phase.value = NfcPhase.idle;
+    if (completer != null && !completer.isCompleted) {
+      completer.completeError(const NfcError('La operación se ha cancelado.'));
+    }
   }
 
   /// Retoma la etiqueta que sigue apoyada, o espera a que vuelva a aparecer.
   ///
-  /// Mientras el canal anterior responda se reaprovecha, que es lo que evita
-  /// tener que rearmar el lector con la etiqueta encima.
-  Future<void> _resume() async {
+  /// Con [fresh] y la etiqueta encima se pide retirarla: hay operaciones que
+  /// necesitan que la etiqueta se quede sin alimentación para que vuelva a
+  /// aplicar su configuración de seguridad, y eso no se finge desde la app.
+  Future<void> _resume({bool fresh = false}) async {
     final current = _current;
     final present = current != null && await current.isPresent();
-    if (present) {
+    if (present && !fresh) {
       unawaited(_runPending(current));
       return;
     }
+    if (present) {
+      unawaited(_waitForLift(current));
+      return;
+    }
     _current = null;
+    await _restartPolling();
+  }
+
+  /// Pide retirar la etiqueta y espera a que salga del campo; en cuanto se va,
+  /// vuelve a quedarse a la espera de que la apoyen otra vez.
+  ///
+  /// Se espera lo que haga falta: el usuario siempre puede cancelar.
+  Future<void> _waitForLift(TagTransceiver current) async {
+    final generation = _generation;
+    phase.value = NfcPhase.lifting;
+    while (true) {
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      if (!_sessionOpen || generation != _generation) return;
+      // La acción se ha cancelado por el camino: ya no hay nada que esperar.
+      if (_pending == null) return;
+      if (!await current.isPresent()) break;
+    }
+    if (!_sessionOpen || generation != _generation || _pending == null) return;
+    if (identical(_current, current)) _current = null;
+    trace.add('-- la etiqueta se ha retirado, empieza una sesión nueva --');
+    phase.value = NfcPhase.waiting;
     await _restartPolling();
   }
 

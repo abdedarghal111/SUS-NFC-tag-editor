@@ -46,6 +46,15 @@ class TagStatusStrip extends StatelessWidget {
         scheme.primaryContainer,
         scheme.onPrimaryContainer,
       ),
+      NfcPhase.lifting => (
+        Icons.pan_tool,
+        'Quita la etiqueta y vuelve a ponerla',
+        action.isEmpty
+            ? 'Sepárala del teléfono y apóyala otra vez.'
+            : 'Sepárala y apóyala otra vez; al volver: $action.',
+        scheme.primaryContainer,
+        scheme.onPrimaryContainer,
+      ),
       NfcPhase.working => (
         Icons.autorenew,
         action.isEmpty ? 'Trabajando' : action,
@@ -81,7 +90,7 @@ class TagStatusStrip extends StatelessWidget {
             _PulsingIcon(
               icon: icon,
               color: foreground,
-              animate: phase == NfcPhase.waiting,
+              animate: phase == NfcPhase.waiting || phase == NfcPhase.lifting,
             ),
           const SizedBox(width: 16),
           Expanded(
@@ -103,7 +112,7 @@ class TagStatusStrip extends StatelessWidget {
               ],
             ),
           ),
-          if (phase == NfcPhase.waiting)
+          if (phase == NfcPhase.waiting || phase == NfcPhase.lifting)
             TextButton(
               onPressed: onCancel,
               style: TextButton.styleFrom(foregroundColor: foreground),
