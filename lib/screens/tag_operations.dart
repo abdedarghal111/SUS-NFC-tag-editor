@@ -150,10 +150,34 @@ List<TagOperation> operationsFor(TagController controller) {
         capabilities: controller.capabilities,
         source: controller.chip?.source ?? controller.sourceOfChoice,
         tested: controller.tested,
+        readings: controller.readings,
         content: controller.content,
         counter: controller.counter,
       ),
     ),
+    if (can.hasSecurity)
+      TagOperation(
+        group: OperationGroup.information,
+        icon: Icons.key_outlined,
+        title: 'Leer con contraseña',
+        subtitle: 'Para las etiquetas que tampoco dejan leer sin ella',
+        description:
+            'Se autentica antes de leer. Hace falta cuando la etiqueta tiene '
+            'protegida también la lectura y rechaza cualquier consulta.',
+        needsPassword: true,
+        run: (controller, input) =>
+            controller.inspectTag(password: input.password),
+        detail: (controller) => TagCard(
+          model: controller.modelName ?? 'Sin modelo',
+          info: controller.info,
+          capabilities: controller.capabilities,
+          source: controller.chip?.source ?? controller.sourceOfChoice,
+          tested: controller.tested,
+          readings: controller.readings,
+          content: controller.content,
+          counter: controller.counter,
+        ),
+      ),
     if (can.hasCounter)
       TagOperation(
         group: OperationGroup.information,
@@ -170,16 +194,21 @@ List<TagOperation> operationsFor(TagController controller) {
         group: OperationGroup.information,
         icon: Icons.policy_outlined,
         title: 'Estado de la contraseña',
-        subtitle: 'Qué protege, cuántos intentos quedan y si la tuya vale',
+        subtitle: 'Qué protege y cuántos intentos quedan',
         description:
             'Lee la configuración de seguridad de la etiqueta: si tiene '
-            'contraseña, qué impide hacer sin ella, cuántos intentos fallidos '
-            'admite y si la que escribas es la suya.',
+            'contraseña, qué impide hacer sin ella y cuántos intentos '
+            'fallidos admite. La contraseña no hace falta; si la pones, '
+            'además comprueba si es la suya.',
         needsPassword: true,
+        passwordOptional: true,
         run: (controller, input) => controller.readSecurity(input.password),
         detail: (controller) => controller.security == null
             ? const SizedBox.shrink()
-            : SecurityCard(security: controller.security!),
+            : SecurityCard(
+                security: controller.security!,
+                readings: controller.securityReadings,
+              ),
       ),
     if (can.canWrite)
       TagOperation(
@@ -211,16 +240,23 @@ List<TagOperation> operationsFor(TagController controller) {
         group: OperationGroup.protection,
         icon: Icons.lock_outline,
         title: 'Poner contraseña',
-        subtitle: 'Hará falta para escribir en la etiqueta',
+        subtitle: 'Protege la etiqueta de lectura y escritura',
         description:
             'Graba la contraseña y protege la etiqueta a partir de la primera '
             'página de contenido.',
         needsPassword: true,
-        tunesAuth0: true,
+        optionLabel: 'Proteger también la lectura',
+        optionHint:
+            'Sin marcar, la contraseña solo frena los cambios y cualquiera '
+            'puede leer lo que tiene. Marcada, la etiqueta no cuenta nada '
+            'sin ella.',
         warning: 'Si se olvida esta contraseña, no hay forma de recuperarla.',
-        run: (controller, input) => controller.setPassword(input.password),
+        run: (controller, input) => controller.setPassword(
+          input.password,
+          protectReading: input.option,
+        ),
       ),
-    if (can.hasSecurity && locked)
+    if (can.hasSecurity && (locked || unknown))
       TagOperation(
         group: OperationGroup.protection,
         icon: Icons.lock_open_outlined,
@@ -230,10 +266,9 @@ List<TagOperation> operationsFor(TagController controller) {
             'Devuelve la etiqueta a su estado abierto: cualquiera podrá '
             'escribir en ella.',
         needsPassword: true,
-        tunesAuth0: true,
         run: (controller, input) => controller.removePassword(input.password),
       ),
-    if (can.canProtectRead && locked)
+    if (can.canProtectRead && (locked || unknown))
       TagOperation(
         group: OperationGroup.protection,
         icon: Icons.visibility_off_outlined,
@@ -243,25 +278,43 @@ List<TagOperation> operationsFor(TagController controller) {
             'Sube la protección de la escritura a la lectura: sin contraseña '
             'la etiqueta no contará nada.',
         needsPassword: true,
-        tunesAuth0: true,
         run: (controller, input) =>
             controller.setReadProtection(true, input.password),
+      ),
+    if (can.canProtectRead && (locked || unknown))
+      TagOperation(
+        group: OperationGroup.protection,
+        icon: Icons.visibility_outlined,
+        title: 'Dejar leer sin contraseña',
+        subtitle:
+            'La lectura vuelve a estar abierta; escribir sigue pidiendo '
+            'contraseña',
+        description:
+            'Baja la protección a la escritura: la etiqueta vuelve a contar '
+            'lo que tiene sin pedir nada.',
+        needsPassword: true,
+        run: (controller, input) =>
+            controller.setReadProtection(false, input.password),
       ),
     if (can.hasSecurity)
       TagOperation(
         group: OperationGroup.experiments,
         icon: Icons.science_outlined,
         title: '¿La contraseña sirve de algo?',
-        subtitle: 'Intenta escribir sin ella y mira si la etiqueta lo rechaza',
+        subtitle: 'Pone una contraseña, intenta escribir sin ella y la quita',
         description:
             'Un clon puede guardar la contraseña y luego no hacerle caso. '
-            'Esta prueba intenta escribir sin autenticarse y compara lo que '
-            'pasa con lo que la etiqueta declara.',
+            'La prueba pone una contraseña conocida, intenta escribir sin '
+            'autenticarse y la quita al terminar. Si la escritura pasa, la '
+            'protección es de adorno. Son tres pasos y cada uno necesita su '
+            'propia pasada: la etiqueta te la pedirá tres veces.',
         warning:
-            'La prueba escribe en la etiqueta: si la deja pasar, el contenido '
-            'cambia.',
-        tunesAuth0: true,
+            'La prueba pone y quita una contraseña de verdad. Si la etiqueta '
+            'la acepta pero luego no deja quitarla, se queda bloqueada. Con '
+            'una etiqueta ya bloqueada la prueba no se hace.',
         run: (controller, input) => controller.probeProtection(),
+        progress: (controller) =>
+            ProbeSteps(progress: controller.probeProgress),
         detail: (controller) => controller.probe == null
             ? const SizedBox.shrink()
             : ProbeCard(probe: controller.probe!),
@@ -271,20 +324,24 @@ List<TagOperation> operationsFor(TagController controller) {
         group: OperationGroup.experiments,
         icon: Icons.straighten,
         title: '¿Tiene la memoria que dice?',
-        subtitle: 'Escribe en todas las páginas para ver cuántas hay de verdad',
+        subtitle: 'Escribe bytes al azar, los relee y los borra',
         description:
-            'Los clones que declaran más memoria de la que llevan repiten la '
-            'que tienen. La prueba escribe una marca distinta en cada página '
-            'y mira desde dónde empieza a repetirse o a fallar.',
+            'Los clones declaran más memoria de la que llevan. La prueba '
+            'escribe bytes al azar página a página, los vuelve a leer para '
+            'ver si son los mismos y los borra. Cada casilla es una página: '
+            'verde si responde bien, roja si no. Las rayadas son la cabecera, '
+            'el bloqueo y la configuración, que no se tocan.',
         warning:
             lockedWarning ??
             'La prueba borra lo que tengas grabado: escribe encima de todo el '
                 'contenido y deja la etiqueta vacía.',
         danger: true,
-        run: (controller, input) => controller.measureCapacity(),
-        detail: (controller) => controller.capacity == null
+        run: (controller, input) => controller.testMemory(),
+        progress: (controller) =>
+            MemoryGrid(progress: controller.memoryProgress),
+        detail: (controller) => controller.memory == null
             ? const SizedBox.shrink()
-            : CapacityCard(capacity: controller.capacity!),
+            : MemoryCard(test: controller.memory!),
       ),
   ];
 }

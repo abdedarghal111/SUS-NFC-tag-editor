@@ -3,14 +3,22 @@
 import 'package:flutter/material.dart';
 
 import '../chips/results/security_status.dart';
-import '../utils/hex.dart';
+import '../chips/results/tag_reading.dart';
+import 'reading_list.dart';
 
 /// Estado de la protección leído de las páginas de configuración.
 class SecurityCard extends StatelessWidget {
-  const SecurityCard({super.key, required this.security});
+  const SecurityCard({
+    super.key,
+    required this.security,
+    this.readings = const [],
+  });
 
   /// Protección leída de la etiqueta, ya interpretada.
   final SecurityStatus security;
+
+  /// Bytes de configuración con su traducción, tal y como los aporta el chip.
+  final List<TagReading> readings;
 
   @override
   Widget build(BuildContext context) {
@@ -29,21 +37,33 @@ class SecurityCard extends StatelessWidget {
             const SizedBox(height: 8),
             Text(security.scope, style: theme.textTheme.bodyMedium),
             const SizedBox(height: 12),
-            _Line(
-              icon: security.protectsReading
-                  ? Icons.visibility_off_outlined
-                  : Icons.visibility_outlined,
-              text: security.protectsReading
-                  ? 'Sin la contraseña no se puede ni leer lo que tiene.'
-                  : 'Leerla puede cualquiera; la contraseña solo frena los '
-                        'cambios.',
-            ),
-            _Line(
-              icon: Icons.repeat,
-              text: limit == 0
-                  ? 'Intentos ilimitados de contraseña.'
-                  : 'Tras $limit fallos la etiqueta se bloquea para siempre.',
-            ),
+            if (security.isLocked)
+              _Line(
+                icon: security.protectsReading
+                    ? Icons.visibility_off_outlined
+                    : Icons.visibility_outlined,
+                text: security.protectsReading
+                    ? 'Sin la contraseña no se puede ni leer lo que tiene.'
+                    : 'Leerla puede cualquiera; la contraseña solo frena los '
+                          'cambios.',
+              ),
+            // El bit se queda escrito aunque se quite la contraseña, y es una
+            // sorpresa desagradable al poner la siguiente.
+            if (!security.isLocked && security.readProtectionArmed)
+              _Line(
+                icon: Icons.visibility_off_outlined,
+                text:
+                    'Ahora mismo no protege nada, pero queda puesto que la '
+                    'próxima contraseña tapará también la lectura.',
+              ),
+            if (security.isLocked)
+              _Line(
+                icon: Icons.repeat,
+                text: limit == 0
+                    ? 'Intentos ilimitados de contraseña.'
+                    : 'Tras $limit fallos la etiqueta se bloquea para '
+                          'siempre.',
+              ),
             if (security.passwordChecked)
               _Line(
                 icon: security.passwordCorrect
@@ -63,7 +83,7 @@ class SecurityCard extends StatelessWidget {
                     'protección no sirve de nada.',
               ),
             const SizedBox(height: 8),
-            _TechnicalDetail(security: security),
+            _TechnicalDetail(readings: readings),
           ],
         ),
       ),
@@ -73,9 +93,9 @@ class SecurityCard extends StatelessWidget {
 
 /// Volcado de los bytes de configuración, guardado tras un desplegable.
 class _TechnicalDetail extends StatelessWidget {
-  const _TechnicalDetail({required this.security});
+  const _TechnicalDetail({required this.readings});
 
-  final SecurityStatus security;
+  final List<TagReading> readings;
 
   @override
   Widget build(BuildContext context) {
@@ -87,17 +107,7 @@ class _TechnicalDetail extends StatelessWidget {
         childrenPadding: const EdgeInsets.only(bottom: 8),
         expandedCrossAxisAlignment: CrossAxisAlignment.start,
         title: Text('Detalle técnico', style: theme.textTheme.bodySmall),
-        children: [
-          SelectableText(
-            'CFG0 ${hexBytes(security.config)}\n'
-            'AUTH0 ${hexByte(security.auth0)} en '
-            '${security.layout.label.toLowerCase()}\n'
-            'ACCESS ${hexByte(security.access)}\n'
-            'PWD ${hexBytes(security.storedPassword)}\n'
-            'PACK ${hexBytes(security.storedPack)}',
-            style: theme.textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
-          ),
-        ],
+        children: [ReadingList(readings: readings)],
       ),
     );
   }

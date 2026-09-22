@@ -126,6 +126,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen>
                       capabilities: _c.capabilities,
                       source: chip?.source ?? _c.sourceOfChoice,
                       tested: _c.tested,
+                      readings: _c.readings,
                       content: _c.content,
                       counter: _c.counter,
                     ),

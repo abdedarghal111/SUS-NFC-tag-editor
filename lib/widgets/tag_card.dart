@@ -6,8 +6,10 @@ import '../chips/chip_capabilities.dart';
 import '../chips/chip_source.dart';
 import '../chips/results/tag_content.dart';
 import '../chips/results/tag_info.dart';
+import '../chips/results/tag_reading.dart';
 import '../utils/hex.dart';
 import '../utils/icons.dart';
+import 'reading_list.dart';
 
 /// Todo lo que se sabe de la etiqueta, en una sola ficha.
 ///
@@ -21,6 +23,7 @@ class TagCard extends StatelessWidget {
     required this.capabilities,
     required this.source,
     required this.tested,
+    this.readings = const [],
     this.content,
     this.counter,
   });
@@ -40,6 +43,9 @@ class TagCard extends StatelessWidget {
   /// Indica si el soporte de este modelo se ha probado contra una etiqueta
   /// real; si no, la ficha lo avisa en rojo.
   final bool tested;
+
+  /// Bytes de la ficha con su traducción, tal y como los aporta el chip.
+  final List<TagReading> readings;
 
   /// Contenido leído, o null si todavía no se ha leído.
   final TagContent? content;
@@ -121,9 +127,20 @@ class TagCard extends StatelessWidget {
               _Flags(info: tag, capabilities: capabilities, counter: counter),
             ],
 
-            if (_capacity > 0) ...[
+            // Con la lectura protegida el hueco ocupado es desconocido, y una
+            // barra vacía diría que está libre.
+            if (_capacity > 0 && !(tag?.readProtected ?? false)) ...[
               const SizedBox(height: 20),
               _Usage(used: content?.usedBytes, capacity: _capacity),
+            ],
+
+            if (tag != null && tag.readProtected) ...[
+              const SizedBox(height: 16),
+              Text(
+                'No cuenta lo que tiene grabado sin la contraseña. Con ella, '
+                '«Leer con contraseña» trae el resto de la ficha.',
+                style: theme.textTheme.bodyMedium,
+              ),
             ],
 
             if (content != null) ...[
@@ -149,7 +166,12 @@ class TagCard extends StatelessWidget {
 
             if (tag != null) ...[
               const Divider(height: 32),
-              _Details(info: tag, capabilities: capabilities, model: model),
+              _Details(
+                info: tag,
+                capabilities: capabilities,
+                model: model,
+                readings: readings,
+              ),
             ],
           ],
         ),
@@ -199,9 +221,18 @@ class _Flags extends StatelessWidget {
           _Flag(
             tone: info.isLocked ? _Tone.bad : _Tone.good,
             icon: info.isLocked ? Icons.lock : Icons.lock_open,
-            label: info.isLocked
-                ? 'Con contraseña desde la página ${info.auth0}'
-                : 'Sin contraseña',
+            label: switch ((info.isLocked, info.config.isEmpty)) {
+              (false, _) => 'Sin contraseña',
+              // Sin CFG0 no se sabe desde qué página protege.
+              (true, true) => 'Con contraseña',
+              (true, false) => 'Con contraseña desde la página ${info.auth0}',
+            },
+          ),
+        if (info.readProtected)
+          const _Flag(
+            tone: _Tone.bad,
+            icon: Icons.visibility_off,
+            label: 'Lectura protegida',
           ),
         _Flag(
           tone: authenticity.$1,
@@ -306,11 +337,13 @@ class _Details extends StatelessWidget {
     required this.info,
     required this.capabilities,
     required this.model,
+    required this.readings,
   });
 
   final TagInfo info;
   final ChipCapabilities capabilities;
   final String model;
+  final List<TagReading> readings;
 
   @override
   Widget build(BuildContext context) {
@@ -320,26 +353,9 @@ class _Details extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _DetailRow(label: 'ATQA', value: hexBytes(info.atqa)),
-        _DetailRow(label: 'SAK', value: hexByte(info.sak)),
-        if (info.manufacturer != null)
-          _DetailRow(
-            label: 'Fabricante',
-            value:
-                '${hexByte(info.manufacturer!)}'
-                '${info.isGenuineNxp ? ' (NXP)' : ''}',
-          ),
-        if (info.product != null)
-          _DetailRow(label: 'Producto', value: hexByte(info.product!)),
+        ReadingList(readings: readings),
         if (declared > 0 && declared != info.capacityBytes)
           _DetailRow(label: 'Capacidad de un $model', value: '$declared B'),
-        if (capabilities.hasSecurity && info.config.isNotEmpty)
-          _DetailRow(
-            label: 'CFG0',
-            value:
-                '${hexBytes(info.config)} · AUTH0 ${hexByte(info.auth0)} en '
-                '${info.layout.label.toLowerCase()}',
-          ),
         const SizedBox(height: 8),
         Text(
           info.authenticity,
