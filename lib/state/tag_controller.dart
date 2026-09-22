@@ -202,14 +202,28 @@ class TagController extends ChangeNotifier {
 
   /// Lee de una pasada todo lo que la etiqueta cuenta de sí misma: contenido,
   /// ficha y contador.
-  Future<void> inspectTag() => _run('Leyendo la etiqueta', (chip) async {
-    content = await chip.readContent();
-    info = await chip.readInfo();
-    if (capabilities.hasCounter) {
-      counter = await chip.readCounter();
-    }
-    return info!;
-  });
+  Future<void> inspectTag({List<int> password = const []}) =>
+      _run('Leyendo la etiqueta', (chip) async {
+        // La ficha primero: lo que la etiqueta cuenta siempre. El contenido
+        // va después porque es lo que puede rechazar.
+        final ficha = await chip.readInfo(password: password);
+        info = ficha;
+        readProtected = ficha.readProtected;
+        content = null;
+        counter = null;
+
+        if (ficha.readProtected) {
+          // Sin contraseña no hay nada más que sacarle. No es un fallo: es
+          // el estado en el que está, y la ficha ya lo enseña.
+          return ficha;
+        }
+
+        content = await chip.readContent(password: password);
+        if (capabilities.hasCounter) {
+          counter = await chip.readCounter();
+        }
+        return ficha;
+      });
 
   /// Graba el contenido sin autenticarse: una etiqueta protegida lo rechaza.
   Future<void> writeContent(List<NdefPayload> payloads) => _run(
