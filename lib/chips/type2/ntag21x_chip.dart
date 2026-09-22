@@ -39,6 +39,12 @@ import 'type2_chip.dart';
 /// verifican.
 const List<int> defaultPack = [0x00, 0x00];
 
+/// Contraseña que pone y quita la prueba de protección.
+///
+/// Es fija y conocida para poder desbloquear la etiqueta a mano si el chip se
+/// queda con ella puesta.
+const List<int> probePassword = [0x50, 0x52, 0x4F, 0x42];
+
 /// Chip de la serie NTAG21x de NXP.
 ///
 /// Los siete modelos comparten comandos y mecanismo de protección; solo
@@ -556,29 +562,6 @@ abstract class Ntag21xChip extends Type2Chip
         : access & ~Type2Chip.protectReadMask;
     if (updated == access) return;
     await writePage(configPage1, [updated, page[1], page[2], page[3]]);
-  /// Comprueba si la etiqueta aplica de verdad la protección que declara.
-  ///
-  /// Leer CFG0 solo cuenta lo que dice; un clon puede guardar el valor y no
-  /// hacerle caso. La prueba concluyente es reescribir la primera página de
-  /// contenido sin autenticarse: si la acepta, la protección no se aplica.
-  Future<ProtectionProbe> probeProtection() async {
-    final config = await readConfig();
-    final page = await readPages(Type2Chip.firstDataPage);
-    final original = page.sublist(0, Type2Chip.pageSize);
-
-    var accepted = false;
-    try {
-      await writePage(Type2Chip.firstDataPage, original);
-      accepted = true;
-    } catch (error) {
-      tag.note('la etiqueta ha rechazado la escritura sin contraseña', error);
-    }
-
-    return ProtectionProbe(
-      config: config,
-      layout: layout,
-      writeAccepted: accepted,
-    );
   }
 
   /// Mide la memoria que la etiqueta tiene de verdad, escribiendo una marca
